@@ -1,0 +1,64 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.npm-cache/
+.electron-cache/
+.cargo-home/
+.cargo-target/
+
+# Build output
+dist/
+out/
+build/
+.next/
+coverage/
+.turbo/
+.cache/
+.vite/
+*.tsbuildinfo
+*.tgz
+
+# Desktop and Tauri
+apps/desktop/dist/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/bundle/
+
+# Reins derived state
+.reins/.cache/
+test/fixtures/**/graft/
+test/fixtures/**/.trail/
+test/fixtures/**/.reins/.cache/
+
+# Trail graph cache
+/graft/
+
+# Local agent state
+.ai-knowledge/
+.home/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# Logs and OS files
+*.log
+logs/
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Tool caches
+.biome/
+.eslintcache
+legacy/

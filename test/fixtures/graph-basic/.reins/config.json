@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "graftDir": "graft",
+  "knowledgeDir": ".reins/knowledge",
+  "surfaces": {
+    "detectors": [
+      "express",
+      "hono",
+      "commander",
+      "next-app",
+      "react-router",
+      "fastapi",
+      "openapi"
+    ],
+    "ignore": []
+  },
+  "ignore": [],
+  "secretPatterns": [
+    ".env*",
+    "*.pem",
+    "*.key",
+    "id_rsa",
+    "id_ed25519"
+  ],
+  "diff": {
+    "maxFileBytes": 1048576,
+    "maxNodesPerFile": 20000
+  },
+  "check": {
+    "verifyCodeLinks": true,
+    "folderMismatch": "warning"
+  },
+  "llm": {
+    "enabled": false,
+    "provider": null,
+    "model": null
+  },
+  "ui": {
+    "theme": "system"
+  }
+}

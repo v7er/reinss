@@ -1,0 +1,33 @@
+{
+  "name": "reins-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter @reins/desktop dev",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "cli": "node apps/cli/dist/main.js",
+    "lint": "biome check .",
+    "reins": "node apps/cli/dist/main.js",
+    "reins:npx": "npx --yes --package ./apps/cli reins",
+    "release": "pnpm -r publish --access public",
+    "release:dry": "pnpm -r publish --access public --dry-run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.8",
+    "@types/node": "^24.10.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "bin": {
+    "reins": "./bin/reins"
+  }
+}

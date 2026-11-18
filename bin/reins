@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ -f "$ROOT/apps/cli/dist/main.js" ]; then
+  exec node "$ROOT/apps/cli/dist/main.js" "$@"
+fi
+exec npx --yes reins "$@"

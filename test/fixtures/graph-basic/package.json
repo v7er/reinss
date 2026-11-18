@@ -1,0 +1,6 @@
+{
+  "name": "graph-basic",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "echo ok" }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "reins",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "reins": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsup src/main.ts src/serve.ts --format esm --clean",
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx src/main.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@reins/core": "workspace:*",
+    "@reins/node": "workspace:*",
+    "commander": "^15.1.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
+  },
+  "description": "Local code structure, intent, and semantic review. CLI and MCP server.",
+  "license": "MIT",
+  "keywords": [
+    "code-graph",
+    "semantic-diff",
+    "trail",
+    "mcp",
+    "code-review",
+    "knowledge-base"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
