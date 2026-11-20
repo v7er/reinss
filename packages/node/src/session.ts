@@ -1,9 +1,12 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
+  assignComponent,
+  type BootstrapResult,
   type CheckItem,
   type CheckReport,
   type CheckRequest,
+  type Component,
   composeHarnessPack,
   computeFingerprint,
   contractVersion,
@@ -13,6 +16,11 @@ import {
   finalizeDiff,
   finalizeFileDiff,
   folderForType,
+  type GitCommit,
+  type GitCommitResult,
+  type GitStatus,
+  type GraphEdge,
+  type GraphNode,
   type GraphRequest,
   type GraphRevision,
   type GraphSlice,
@@ -26,8 +34,10 @@ import {
   type NoteSummary,
   normalizeAsk,
   normalizeCallers,
+  normalizeKind,
   type PackRequest,
   parseConfig,
+  parseSpan,
   type RefreshOptions,
   type ReinsApi,
   ReinsError,
@@ -38,11 +48,14 @@ import {
   type SurfaceFilter,
   type SurfacePage,
   type SymbolHit,
+  type SymbolListRequest,
+  verifySurfaceSymbols,
 } from "@reins/core";
 import fg from "fast-glob";
 import { readCache, writeCache } from "./cache.js";
+import { discoverComponents } from "./components.js";
 import { diffFile } from "./diff.js";
-import { GitAdapter } from "./git.js";
+import { type ChangedFile, GitAdapter } from "./git.js";
 import { folderMismatch, loadKnowledge, noteSummary, proposeNote } from "./knowledge.js";
 import { readJson, resolveWithinRoot, writeAtomic } from "./paths.js";
 import { type ScanDiagnostic, scanSurfaces } from "./surfaces.js";
@@ -50,7 +63,7 @@ import { TrailAdapter } from "./trail.js";
 
 const ADAPTER_VERSION = "0.1.0";
 const SURFACE_CACHE = ".reins/.cache/surfaces.json";
-const SURFACE_DETECTOR_VERSION = 2;
+const SURFACE_DETECTOR_VERSION = 6;
 
 interface SurfaceCacheData {
   surfaces: Surface[];
@@ -97,13 +110,31 @@ function importsPath(source: string, file: string, target: string): boolean {
   return false;
 }
 
+const IMPORT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"];
+
+function importSpecifiers(source: string): string[] {
+  return [...source.matchAll(/(?:from\s*|require\()\s*['"]([^'"]+)['"]/g)].map(
+    (match) => match[1] ?? "",
+  );
+}
+
+function sharedPathSegments(a: string, b: string): number {
+  const left = a.split("/");
+  const right = b.split("/");
+  let count = 0;
+  while (count < left.length && count < right.length && left[count] === right[count]) count += 1;
+  return count;
+}
+
 export class RepoSession implements ReinsApi {
   readonly root: string;
   readonly config: typeof defaultConfig;
   private readonly trail: TrailAdapter;
   private readonly git: GitAdapter;
   private fingerprintCache: { value: GraphRevision; at: number } | null = null;
-  private surfaceCache: SurfaceCacheData | null = null;
+  private surfaceCache: { key: string; data: SurfaceCacheData } | null = null;
+  private componentCache: Component[] | null = null;
+  private symbolCache = new Map<string, Set<string>>();
 
   private constructor(root: string, config: typeof defaultConfig) {
     this.root = root;
@@ -215,6 +246,12 @@ export class RepoSession implements ReinsApi {
     };
   }
 
+  invalidate(): void {
+    this.surfaceCache = null;
+    this.fingerprintCache = null;
+    this.symbolCache.clear();
+  }
+
   async refreshGraph(opts?: RefreshOptions): Promise<RepoStatus> {
     if (!opts?.force) {
       const current = await this.status();
@@ -223,7 +260,45 @@ export class RepoSession implements ReinsApi {
     await this.trail.build();
     this.fingerprintCache = null;
     this.surfaceCache = null;
+    this.componentCache = null;
+    this.symbolCache.clear();
     return this.status();
+  }
+
+  async gitStatus(): Promise<GitStatus> {
+    return this.git.status();
+  }
+
+  async gitStage(req: { paths: string[] }): Promise<GitStatus> {
+    await this.git.stage(req.paths);
+    return this.git.status();
+  }
+
+  async gitUnstage(req: { paths: string[] }): Promise<GitStatus> {
+    await this.git.unstage(req.paths);
+    return this.git.status();
+  }
+
+  async gitDiscard(req: { paths: string[]; confirm: boolean }): Promise<GitStatus> {
+    if (!req.confirm) {
+      throw new ReinsError("GIT_CONFIRM_REQUIRED", "Discarding changes requires confirm: true.");
+    }
+    await this.git.discard(req.paths);
+    return this.git.status();
+  }
+
+  async gitCommit(req: {
+    message: string;
+    amend?: boolean;
+    signoff?: boolean;
+  }): Promise<GitCommitResult> {
+    const result = await this.git.commit(req);
+    this.invalidate();
+    return result;
+  }
+
+  async gitLog(req?: { limit?: number; path?: string }): Promise<GitCommit[]> {
+    return this.git.log(req?.limit ?? 30, req?.path);
   }
 
   async searchSymbols(q: string, opts?: SearchOptions): Promise<SymbolHit[]> {
@@ -232,6 +307,48 @@ export class RepoSession implements ReinsApi {
     return normalizeAsk(result, limit).filter(
       (hit) => !opts?.pathPrefix || hit.path.startsWith(opts.pathPrefix),
     );
+  }
+
+  async listSymbols(req?: SymbolListRequest): Promise<SymbolHit[]> {
+    const limit = Math.min(Math.max(req?.limit ?? 20, 1), 100);
+    const map = await this.trail.map();
+    return map.symbols.slice(0, limit).map((symbol) => {
+      const span = parseSpan(symbol.span);
+      return {
+        id: `${symbol.path}#${symbol.name}`,
+        name: symbol.name,
+        kind: normalizeKind(symbol.kind),
+        path: symbol.path,
+        startLine: span.startLine,
+        endLine: span.endLine,
+        snippet: "",
+        score: symbol.inDegree ?? 0,
+      };
+    });
+  }
+
+  private untraceable(surface: Surface): ReinsError | null {
+    if (surface.evidence !== "openapi" || surface.metadata.sourceFile) return null;
+    const target = `${surface.method ?? ""} ${surface.route ?? surface.label}`.trim();
+    const message = `OpenAPI surface ${target} has no x-source-file, so Reins cannot trace it to code.\nAdd "x-source-file" to the operation, path, or document in openapi.json:\n{ "get": { "operationId": "listJobs", "x-source-file": "src/jobs.ts" } }\nThen rescan surfaces.`;
+    return new ReinsError("SURFACE_UNTRACEABLE", message, {
+      details: { surfaceId: surface.id, reason: "missing-x-source-file" },
+    });
+  }
+
+  private async surfaceSymbol(surface: Surface): Promise<string | null> {
+    if (surface.symbolId) return surface.symbolId;
+    if (surface.symbolName) {
+      const hits = await this.searchSymbols(surface.symbolName, {
+        limit: 2,
+        pathPrefix: surface.file,
+      });
+      if (hits.length === 1 && hits[0]?.id) return hits[0].id;
+    }
+    // x-source-file names a file, not a symbol: start from its first symbol.
+    const entries = await this.skeletonEntries(surface.file);
+    const entry = entries[0];
+    return entry ? `${entry.file}#${entry.name}` : null;
   }
 
   private async resolveRoot(req: GraphRequest): Promise<string> {
@@ -244,12 +361,16 @@ export class RepoSession implements ReinsApi {
       if (!surface) {
         throw new ReinsError("SURFACE_NOT_FOUND", `Unknown surface: ${surfaceId}`);
       }
-      if (!surface.symbolId) {
-        throw new ReinsError("SYMBOL_NOT_FOUND", `Surface ${surface.id} has no linked symbol.`, {
-          details: { surfaceId: surface.id },
-        });
-      }
-      return surface.symbolId;
+      const untraceable = this.untraceable(surface);
+      if (untraceable) throw untraceable;
+      const symbol = await this.surfaceSymbol(surface);
+      if (symbol) return symbol;
+      throw new ReinsError("SYMBOL_NOT_FOUND", `Surface ${surface.id} has no linked symbol.`, {
+        details: {
+          surfaceId: surface.id,
+          reason: surface.metadata.linkReason ?? "no-symbol",
+        },
+      });
     }
     const query = root.query;
     const hits = await this.searchSymbols(query, { limit: 5 });
@@ -307,11 +428,208 @@ export class RepoSession implements ReinsApi {
     return normalizeCallers(result, base);
   }
 
+  private async existingFile(base: string): Promise<string | null> {
+    const candidates = [base];
+    if (base.endsWith(".js")) {
+      candidates.push(base.replace(/\.js$/, ".ts"), base.replace(/\.js$/, ".tsx"));
+    }
+    for (const extension of IMPORT_EXTENSIONS) candidates.push(`${base}${extension}`);
+    for (const extension of IMPORT_EXTENSIONS) candidates.push(`${base}/index${extension}`);
+    for (const candidate of candidates) {
+      try {
+        await fs.access(resolveWithinRoot(this.root, candidate));
+        return candidate;
+      } catch {
+        // try the next candidate
+      }
+    }
+    return null;
+  }
+
+  private async resolveImport(file: string, specifier: string): Promise<string | null> {
+    if (specifier.startsWith(".")) {
+      return this.existingFile(
+        path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)),
+      );
+    }
+    const alias = /^[@~#]\//.exec(specifier);
+    if (!alias) return null;
+    const rest = specifier.slice(alias[0].length);
+    const matches = await fg([`**/${rest}.{ts,tsx,js,jsx}`, `**/${rest}/index.{ts,tsx,js,jsx}`], {
+      cwd: this.root,
+      ignore: [
+        ...this.config.ignore,
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/build/**",
+        "**/.next/**",
+        "**/coverage/**",
+        "**/.turbo/**",
+        "**/.cache/**",
+        "**/.reins/**",
+      ],
+      onlyFiles: true,
+      dot: false,
+    });
+    if (matches.length === 0) return null;
+    return (
+      matches.sort((a, b) => sharedPathSegments(b, file) - sharedPathSegments(a, file))[0] ?? null
+    );
+  }
+
+  private async skeletonEntries(
+    file: string,
+  ): Promise<Array<{ file: string; name: string; kind: string; span: string }>> {
+    try {
+      const skeleton = await this.trail.skeleton(file);
+      if (skeleton.entries.length > 0) {
+        return skeleton.entries.map((entry) => ({ ...entry, file }));
+      }
+    } catch {
+      // fall through to the re-export scan
+    }
+    // Barrel files re-export their symbols; follow one level so the flow shows the real code.
+    try {
+      const source = await fs.readFile(resolveWithinRoot(this.root, file), "utf8");
+      const entries: Array<{ file: string; name: string; kind: string; span: string }> = [];
+      for (const specifier of importSpecifiers(source)) {
+        if (!specifier.startsWith(".")) continue;
+        const target = await this.existingFile(
+          path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)),
+        );
+        if (!target) continue;
+        try {
+          const nested = await this.trail.skeleton(target);
+          entries.push(...nested.entries.map((entry) => ({ ...entry, file: target })));
+        } catch {
+          // skip files Trail cannot index
+        }
+      }
+      return entries;
+    } catch {
+      return [];
+    }
+  }
+
+  private async importSlice(
+    root: GraphNode,
+    revision: GraphRevision,
+    maxNodes: number,
+  ): Promise<GraphSlice | null> {
+    let source: string;
+    try {
+      source = await fs.readFile(resolveWithinRoot(this.root, root.path), "utf8");
+    } catch {
+      return null;
+    }
+    const files = new Set<string>();
+    for (const specifier of importSpecifiers(source)) {
+      const file = await this.resolveImport(root.path, specifier);
+      if (file && file !== root.path) files.add(file);
+      if (files.size >= 20) break;
+    }
+    const nodes: GraphNode[] = [];
+    const edges: GraphEdge[] = [];
+    for (const file of files) {
+      const entries = await this.skeletonEntries(file);
+      if (entries.length === 0) {
+        let endLine = 1;
+        try {
+          const text = await fs.readFile(resolveWithinRoot(this.root, file), "utf8");
+          endLine = text.split("\n").length;
+        } catch {
+          // keep the single-line span
+        }
+        nodes.push({
+          id: file,
+          name: path.posix.basename(file),
+          kind: "module",
+          path: file,
+          startLine: 1,
+          endLine,
+          depth: 1,
+          external: false,
+        });
+        edges.push({ source: root.id, target: file, relation: "references", depth: 1, line: null });
+        continue;
+      }
+      for (const entry of entries) {
+        const span = parseSpan(entry.span);
+        const id = `${entry.file}#${entry.name}`;
+        nodes.push({
+          id,
+          name: entry.name,
+          kind: normalizeKind(entry.kind),
+          path: entry.file,
+          startLine: span.startLine,
+          endLine: span.endLine,
+          depth: 1,
+          external: false,
+        });
+        edges.push({ source: root.id, target: id, relation: "references", depth: 1, line: null });
+      }
+    }
+    if (nodes.length === 0) return null;
+    const all = [root, ...nodes];
+    const truncated = all.length > maxNodes;
+    const capped = truncated ? all.slice(0, maxNodes) : all;
+    const kept = new Set(capped.map((node) => node.id));
+    return {
+      contractVersion: 1,
+      root,
+      direction: "out",
+      requestedDepth: 1,
+      effectiveDepth: 1,
+      nodes: capped,
+      edges: edges.filter((edge) => kept.has(edge.target)),
+      truncated,
+      truncatedBy: truncated ? "nodes" : null,
+      revision,
+    };
+  }
+
+  private async components(): Promise<Component[]> {
+    if (!this.componentCache) this.componentCache = await discoverComponents(this.root);
+    return this.componentCache;
+  }
+
+  private async symbolNames(
+    surfaces: Surface[],
+    revision: GraphRevision,
+  ): Promise<Map<string, Set<string>>> {
+    const names = new Map<string, Set<string>>();
+    if (!revision.inSync) return names;
+    const files = [
+      ...new Set(
+        surfaces
+          .filter((surface) => surface.symbolName && surface.symbolId)
+          .map((surface) => surface.file),
+      ),
+    ].slice(0, 200);
+    for (const file of files) {
+      let set = this.symbolCache.get(file);
+      if (!set) {
+        try {
+          const skeleton = await this.trail.skeleton(file);
+          set = new Set(skeleton.entries.map((entry) => entry.name));
+        } catch {
+          set = new Set();
+        }
+        this.symbolCache.set(file, set);
+      }
+      names.set(file, set);
+    }
+    return names;
+  }
+
   async listSurfaces(filter?: SurfaceFilter): Promise<SurfacePage> {
     const revision = await this.revision();
+    const components = await this.components();
     const cacheKey = `${revision.fingerprint}:d${SURFACE_DETECTOR_VERSION}`;
-    const canCache = revision.gitHead !== null;
-    let data = this.surfaceCache;
+    const git = await this.git.info();
+    const canCache = revision.gitHead !== null && !git.dirty;
+    // A dirty tree has no content fingerprint, so only reuse the cache when it is safe to write one.
+    let data = canCache && this.surfaceCache?.key === cacheKey ? this.surfaceCache.data : null;
     if (!data) {
       const cached = canCache ? await readCache<SurfaceCacheData>(this.root, SURFACE_CACHE) : null;
       if (cached && cached.fingerprint === cacheKey) {
@@ -320,19 +638,60 @@ export class RepoSession implements ReinsApi {
         const scan = await scanSurfaces(this.root, {
           detectors: this.config.surfaces.detectors,
           ignore: [...this.config.ignore, ...this.config.surfaces.ignore],
+          components,
         });
-        data = { surfaces: scan.surfaces, diagnostics: scan.diagnostics };
+        const names = await this.symbolNames(scan.surfaces, revision);
+        data = {
+          surfaces: verifySurfaceSymbols(scan.surfaces, names),
+          diagnostics: scan.diagnostics,
+        };
         if (canCache) await writeCache(this.root, SURFACE_CACHE, cacheKey, data);
       }
-      this.surfaceCache = data;
+      if (canCache) this.surfaceCache = { key: cacheKey, data };
     }
 
-    let items = data.surfaces;
+    let items = data.surfaces.map((surface) => ({
+      ...surface,
+      componentId: surface.componentId || assignComponent(surface.file, components),
+    }));
+
+    let changed: Map<string, ChangedFile> | null = null;
+    if (filter?.range || filter?.changed) {
+      try {
+        changed = await this.git.changedLines(filter.range ?? { mode: "working" });
+      } catch {
+        changed = null;
+      }
+    }
+    if (changed) {
+      const changes = changed;
+      items = items.map((surface) => {
+        const file = changes.get(surface.file);
+        if (!file) return { ...surface, change: null };
+        const touched =
+          file.status === "added" ||
+          file.status === "deleted" ||
+          file.ranges.some((range) => surface.line >= range.start && surface.line <= range.end);
+        return { ...surface, change: { status: file.status, touched } };
+      });
+    }
+
     if (filter?.kind) items = items.filter((item) => item.kind === filter.kind);
     if (filter?.framework) items = items.filter((item) => item.framework === filter.framework);
     if (filter?.pathPrefix)
       items = items.filter((item) => item.file.startsWith(filter.pathPrefix as string));
     if (filter?.confidence) items = items.filter((item) => item.confidence === filter.confidence);
+    if (filter?.evidence) items = items.filter((item) => item.evidence === filter.evidence);
+    if (filter?.component) {
+      const wanted = filter.component;
+      const ids = new Set(
+        components
+          .filter((component) => component.id === wanted || component.kind === wanted)
+          .map((component) => component.id),
+      );
+      items = items.filter((item) => ids.has(item.componentId));
+    }
+    if (filter?.changed) items = items.filter((item) => item.change);
     if (filter?.query) {
       const query = filter.query.toLowerCase();
       items = items.filter(
@@ -342,6 +701,19 @@ export class RepoSession implements ReinsApi {
           (item.symbolName ?? "").toLowerCase().includes(query),
       );
     }
+
+    const counts = new Map<string, number>();
+    const changedIds = new Set<string>();
+    for (const item of items) {
+      counts.set(item.componentId, (counts.get(item.componentId) ?? 0) + 1);
+      if (item.change) changedIds.add(item.componentId);
+    }
+    const pageComponents = components.map((component) => ({
+      ...component,
+      surfaceCount: counts.get(component.id) ?? 0,
+      changed: changedIds.has(component.id),
+    }));
+
     const offset = Math.max(filter?.offset ?? 0, 0);
     const limit = Math.min(Math.max(filter?.limit ?? 100, 1), 1000);
     const total = items.length;
@@ -349,11 +721,11 @@ export class RepoSession implements ReinsApi {
     return {
       contractVersion: 1,
       items: page,
+      components: pageComponents,
       total,
       offset,
       limit,
       truncated: offset + page.length < total,
-      stale: !revision.inSync,
     };
   }
 
@@ -370,7 +742,11 @@ export class RepoSession implements ReinsApi {
           (item.route && `${item.method ?? ""} ${item.route}`.trim() === target) ||
           item.route === target,
       );
-      if (surface?.symbolId) symbolId = surface.symbolId;
+      if (surface) {
+        const untraceable = this.untraceable(surface);
+        if (untraceable) throw untraceable;
+        symbolId = await this.surfaceSymbol(surface);
+      }
       if (!surface) {
         const hits = await this.searchSymbols(target, { limit: 2 });
         if (hits.length === 1 && hits[0]?.id) symbolId = hits[0].id;
@@ -379,19 +755,38 @@ export class RepoSession implements ReinsApi {
     if (!symbolId) {
       throw new ReinsError("SURFACE_NOT_FOUND", `No surface or symbol matched "${target}".`);
     }
-    return this.graph({
+    const maxNodes = Math.min(Math.max(req.maxNodes ?? 500, 1), 2000);
+    const slice = await this.graph({
       root: { symbolId },
       direction: req.direction ?? "out",
       depth: req.depth ?? 3,
-      maxNodes: req.maxNodes ?? 500,
+      maxNodes,
     });
+    if (slice.nodes.length > 1 || !slice.root || slice.direction === "in") return slice;
+    // Trail has no call edges for many UI components. Fall back to the imports of the
+    // entry file so the flow still shows the files the entry point depends on.
+    const fallback = await this.importSlice(slice.root, slice.revision, maxNodes);
+    return fallback ?? slice;
   }
 
   async diff(req: DiffRequest): Promise<SemanticDiff> {
     const resolved = await this.git.resolveRange(req.range);
+    const ignoredPrefixes = [
+      "graft/",
+      ".reins/.cache/",
+      ".swift-cache/",
+      "node_modules/",
+      "dist/",
+      "out/",
+      ".cargo-target/",
+      ".cargo-home/",
+    ];
+    const visible = resolved.changes.filter(
+      (change) => !ignoredPrefixes.some((prefix) => change.path.startsWith(prefix)),
+    );
     const files = req.files
-      ? resolved.changes.filter((change) => req.files?.includes(change.path))
-      : resolved.changes;
+      ? visible.filter((change) => req.files?.includes(change.path))
+      : visible;
     const limited = files.slice(0, 200);
     const maxOps = Math.min(Math.max(req.maxOperationsPerFile ?? 500, 1), 500);
     let operationsTruncated = false;
@@ -400,16 +795,29 @@ export class RepoSession implements ReinsApi {
       const oldPath = change.oldPath ?? change.path;
       let oldSource: string | null = null;
       let newSource: string | null = null;
-      if (change.status !== "added" && resolved.baseCommit) {
-        oldSource = await this.git.readAt(resolved.baseCommit, oldPath);
-      }
-      if (change.status !== "deleted") {
-        if (resolved.mode === "range" && resolved.headCommit) {
+      if (resolved.mode === "commit") {
+        if (change.status !== "added" && resolved.baseCommit) {
+          oldSource = await this.git.readAt(resolved.baseCommit, oldPath);
+        }
+        if (change.status !== "deleted" && resolved.headCommit) {
           newSource = await this.git.readAt(resolved.headCommit, change.path);
-        } else if (resolved.mode === "staged") {
-          newSource = await this.git.readStaged(change.path);
-        } else {
-          newSource = await this.git.readWorking(change.path);
+        }
+      } else {
+        if (change.status !== "added") {
+          if (resolved.mode === "unstaged") {
+            oldSource = await this.git.readStaged(oldPath);
+          } else if (resolved.baseCommit) {
+            oldSource = await this.git.readAt(resolved.baseCommit, oldPath);
+          }
+        }
+        if (change.status !== "deleted") {
+          if (resolved.mode === "range" && resolved.headCommit) {
+            newSource = await this.git.readAt(resolved.headCommit, change.path);
+          } else if (resolved.mode === "staged") {
+            newSource = await this.git.readStaged(change.path);
+          } else {
+            newSource = await this.git.readWorking(change.path);
+          }
         }
       }
       const fileDiff = diffFile({
@@ -723,26 +1131,75 @@ export class RepoSession implements ReinsApi {
     });
   }
 
-  async readFile(file: string): Promise<{ path: string; text: string }> {
+  async readFile(
+    file: string,
+    rev: "working" | "staged" = "working",
+  ): Promise<{ path: string; text: string }> {
+    if (rev === "staged") {
+      const text = await this.git.readStaged(file);
+      return { path: file, text: text ?? "" };
+    }
     const text = await fs.readFile(resolveWithinRoot(this.root, file), "utf8");
     return { path: file, text };
   }
 
-  async init(): Promise<void> {
+  private async ensureScaffold(): Promise<string[]> {
+    const created: string[] = [];
     const configPath = ".reins/config.json";
     try {
       await fs.access(resolveWithinRoot(this.root, configPath));
+    } catch {
+      await writeAtomic(this.root, configPath, `${JSON.stringify(this.config, null, 2)}\n`);
+      created.push(configPath);
+    }
+    try {
+      await fs.access(resolveWithinRoot(this.root, ".reins/.gitignore"));
+    } catch {
+      await writeAtomic(this.root, ".reins/.gitignore", ".cache/\n");
+      created.push(".reins/.gitignore");
+    }
+    for (const folder of ["specs", "decisions", "constraints", "howto", "questions", "inbox"]) {
+      const relative = `${this.config.knowledgeDir}/${folder}`;
+      try {
+        await fs.access(resolveWithinRoot(this.root, relative));
+      } catch {
+        await fs.mkdir(resolveWithinRoot(this.root, relative), { recursive: true });
+        created.push(relative);
+      }
+    }
+    return created;
+  }
+
+  async init(): Promise<void> {
+    try {
+      await fs.access(resolveWithinRoot(this.root, ".reins/config.json"));
       throw new ReinsError("CONFIG_INVALID", "A Reins config already exists.");
     } catch (err) {
       if (err instanceof ReinsError) throw err;
     }
-    await writeAtomic(this.root, configPath, `${JSON.stringify(this.config, null, 2)}\n`);
-    await writeAtomic(this.root, ".reins/.gitignore", ".cache/\n");
-    for (const folder of ["specs", "decisions", "constraints", "howto", "questions", "inbox"]) {
-      await fs.mkdir(resolveWithinRoot(this.root, `${this.config.knowledgeDir}/${folder}`), {
-        recursive: true,
-      });
+    await this.ensureScaffold();
+  }
+
+  async bootstrap(): Promise<BootstrapResult> {
+    const created = await this.ensureScaffold();
+    let graphBuilt = false;
+    const before = await this.status();
+    if (before.graph.state !== "ready") {
+      try {
+        await this.refreshGraph({ force: true });
+        graphBuilt = true;
+      } catch {
+        // status reports the precise graph state; bootstrap still finishes the scaffold
+      }
     }
+    const surfaces = (await this.listSurfaces({ limit: 1 })).total;
+    return {
+      contractVersion: 1,
+      created,
+      graphBuilt,
+      surfaces,
+      status: await this.status(),
+    };
   }
 }
 

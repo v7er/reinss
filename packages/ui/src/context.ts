@@ -4,6 +4,7 @@ import { createContext, useContext } from "react";
 export interface ReinsContextValue {
   client: ReinsClient;
   theme: "light" | "dark" | "system";
+  dataVersion: number;
   onNavigate?: (target: NavigationTarget) => void;
 }
 

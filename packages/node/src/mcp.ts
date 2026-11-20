@@ -71,6 +71,25 @@ export async function startMcpServer(session: RepoSession): Promise<void> {
   );
 
   server.registerTool(
+    "reins_symbols_list",
+    {
+      description:
+        "List graph nodes without a query, most connected first. Use to start from the existing graph when no symbol is known.",
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(100).optional(),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return text(await session.listSymbols({ limit: args.limit }));
+      } catch (err) {
+        return failure(err);
+      }
+    },
+  );
+
+  server.registerTool(
     "reins_callers",
     {
       description:

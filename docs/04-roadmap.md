@@ -22,9 +22,9 @@ Estimates assume one developer working with a coding agent, part time. They are 
 | 1 | Done. |
 | 2 | Done for Express, Hono, Commander, Next.js App Router, React Router, FastAPI. |
 | 3 | Done for TypeScript, TSX, JavaScript, JSX; Python degrades to line diff. |
-| 4 | Done, including spec-kit import. |
+| 4 | Done, including OpenSpec import. |
 | 5 | Done: review workspace, embeddable components, MCP tools, harness pack. |
-| 6 | Partial: watcher, packaging, Windows/Linux, OpenAPI import, Expo, LLM enrichment remain. |
+| 6 | Partial: packaging, Windows/Linux, OpenAPI YAML import, Expo, LLM enrichment remain; the file watcher ships. |
 
 ## 3. Overview
 
@@ -103,6 +103,7 @@ Detailed plan: [05. Phase 1 foundation](05-phase-1-foundation.md).
 - CLI: `reins surfaces`, `reins flow`, `reins graph --direction both`.
 - MCP: `reins_surfaces`, `reins_flow`.
 - Surface linking rules and diagnostics for unresolved handlers.
+- C1 component discovery and grouping, plus the Git change overlay on surfaces.
 - Migration of the graph renderer to handle 1,500 nodes with aggregation.
 
 **Not in scope.** FastAPI, Expo, OpenAPI import, package export surfaces, large-graph Sigma mode.
@@ -219,7 +220,7 @@ Detailed plan: [05. Phase 1 foundation](05-phase-1-foundation.md).
 - File watcher for code and knowledge, with debounce and targeted invalidation.
 - Performance passes against all budgets on a real 100k LOC and 1M LOC repository.
 - Windows and Linux builds, signing and notarization for macOS.
-- FastAPI, Expo, OpenAPI import, and package export surfaces.
+- FastAPI, Expo, OpenAPI YAML import, and package export surfaces.
 - `reins_harness_pack`, agent evaluation suite, and the remaining project skills.
 - Optional LLM enrichment: surface summaries, note drafts, diff explanations, all opt-in and labeled.
 - Import from `.boardry/` and `DESCRIPTION` style docs as a one-way migration helper.
@@ -249,6 +250,9 @@ Detailed plan: [05. Phase 1 foundation](05-phase-1-foundation.md).
 | SURF-1 to SURF-5 | 2 | 3 |
 | SURF-6, SURF-8 | 6 | 6 |
 | SURF-7 | 2 | 2 |
+| GIT-1 to GIT-5 | 6 | 6 |
+| SURF-9 | 2 | 2 |
+| SURF-10 | 2 | 2 |
 | DIFF-1 to DIFF-9 | 3 | 4 |
 | DIFF-10 to DIFF-12 | 6 | 6 |
 | KNOW-1 to KNOW-8 | 4 | 5 |
@@ -289,7 +293,7 @@ Stop the current phase and reconsider when any of these hold:
 
 - One graph source: Trail.
 - One API: `ReinsApi` in core.
-- One knowledge source: committed markdown.
+- One knowledge source: committed markdown, including read-only OpenSpec.
 - One diff engine: the AST matcher.
 - No network by default.
 - No code execution from the repository.

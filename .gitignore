@@ -5,6 +5,7 @@ node_modules/
 .electron-cache/
 .cargo-home/
 .cargo-target/
+.swift-cache/
 
 # Build output
 dist/
@@ -62,3 +63,4 @@ Thumbs.db
 .biome/
 .eslintcache
 legacy/
+.swift-cache/

@@ -3,6 +3,7 @@ import { parse } from "@babel/parser";
 import {
   type ChangeKind,
   changeId,
+  type DiffHunk,
   emptyStats,
   type FileDiff,
   finalizeFileDiff,
@@ -10,6 +11,42 @@ import {
   type SemanticChange,
   type SymbolKind,
 } from "@reins/core";
+import { structuredPatch } from "diff";
+
+// shortcut: line hunks are skipped above 4000 lines, upgrade to a streaming
+// diff if large-file line markers are needed.
+const MAX_HUNK_LINES = 4000;
+
+function lineHunks(oldText: string, newText: string): DiffHunk[] {
+  if (oldText.split("\n").length > MAX_HUNK_LINES || newText.split("\n").length > MAX_HUNK_LINES) {
+    return [];
+  }
+  const patch = structuredPatch("a", "b", oldText, newText, undefined, undefined, { context: 3 });
+  return patch.hunks.map((hunk) => {
+    let oldLine = hunk.oldStart;
+    let newLine = hunk.newStart;
+    const lines: DiffHunk["lines"] = [];
+    for (const raw of hunk.lines) {
+      if (raw.startsWith("\\")) continue;
+      const kind = raw.startsWith("+") ? "added" : raw.startsWith("-") ? "removed" : "context";
+      lines.push({
+        kind,
+        oldLine: kind === "added" ? null : oldLine,
+        newLine: kind === "removed" ? null : newLine,
+        text: raw.slice(1),
+      });
+      if (kind !== "added") oldLine += 1;
+      if (kind !== "removed") newLine += 1;
+    }
+    return {
+      oldStart: hunk.oldStart,
+      oldLines: hunk.oldLines,
+      newStart: hunk.newStart,
+      newLines: hunk.newLines,
+      lines,
+    };
+  });
+}
 
 interface Decl {
   name: string;
@@ -283,15 +320,22 @@ export function diffFile(input: {
     language,
     degraded: false,
     changes: [],
+    hunks: [],
     stats: emptyStats(),
   };
 
-  if (language === "unknown" || language === "python") {
-    return finalizeFileDiff({ ...base, degraded: true, degradedReason: "unsupported-language" });
-  }
   const maxBytes = input.maxFileBytes ?? 1_048_576;
   if ((input.oldSource?.length ?? 0) > maxBytes || (input.newSource?.length ?? 0) > maxBytes) {
     return finalizeFileDiff({ ...base, degraded: true, degradedReason: "too-large" });
+  }
+  const hunks = lineHunks(input.oldSource ?? "", input.newSource ?? "");
+  if (language === "unknown" || language === "python") {
+    return finalizeFileDiff({
+      ...base,
+      hunks,
+      degraded: true,
+      degradedReason: "unsupported-language",
+    });
   }
 
   const oldParsed = input.oldSource
@@ -299,7 +343,7 @@ export function diffFile(input: {
     : null;
   const newParsed = input.newSource ? parseSource(input.path, input.newSource) : null;
   if ((input.oldSource && !oldParsed) || (input.newSource && !newParsed)) {
-    return finalizeFileDiff({ ...base, degraded: true, degradedReason: "parse-error" });
+    return finalizeFileDiff({ ...base, hunks, degraded: true, degradedReason: "parse-error" });
   }
 
   const oldDecls = oldParsed
@@ -448,5 +492,5 @@ export function diffFile(input: {
     );
   }
 
-  return finalizeFileDiff({ ...base, changes });
+  return finalizeFileDiff({ ...base, changes, hunks });
 }

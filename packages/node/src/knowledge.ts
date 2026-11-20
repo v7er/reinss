@@ -57,7 +57,7 @@ function parseNote(input: {
   id: string;
   file: string;
   text: string;
-  source: "reins" | "spec-kit";
+  source: "reins" | "openspec";
 }): { note: KnowledgeNote | null; error: CheckItem | null } {
   let parsed: matter.GrayMatterFile<string>;
   try {
@@ -107,84 +107,121 @@ function parseNote(input: {
   return { note, error: null };
 }
 
-async function specKitNotes(
+const openspecPatterns = [
+  "openspec/config.yaml",
+  "openspec/project.md",
+  "openspec/specs/**/spec.md",
+  "openspec/changes/**/{proposal,design,tasks,spec}.md",
+];
+
+async function openspecFiles(root: string): Promise<string[]> {
+  const files = await fg(openspecPatterns, {
+    cwd: root,
+    onlyFiles: true,
+    ignore: ["**/node_modules/**"],
+  });
+  return files.sort();
+}
+
+export async function listOpenSpecFiles(root: string): Promise<string[]> {
+  return openspecFiles(root);
+}
+
+function openspecKind(file: string): { kind: string; type: NoteType } {
+  if (file === "openspec/config.yaml") return { kind: "config", type: "constraint" };
+  if (file === "openspec/project.md") return { kind: "project", type: "spec" };
+  if (file.endsWith("/proposal.md")) return { kind: "proposal", type: "spec" };
+  if (file.endsWith("/design.md")) return { kind: "design", type: "decision" };
+  if (file.endsWith("/tasks.md")) return { kind: "tasks", type: "howto" };
+  return { kind: "spec", type: "spec" };
+}
+
+function slugify(value: string): string {
+  return value
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+}
+
+function fitId(id: string): string {
+  return id.length <= 64 ? id : `${id.slice(0, 55)}-${hashText(id)}`;
+}
+
+function openspecId(file: string): string {
+  if (file === "openspec/config.yaml") return "openspec-config";
+  if (file === "openspec/project.md") return "openspec-project";
+  const spec = /^openspec\/specs\/(.+)\/spec\.md$/.exec(file);
+  if (spec?.[1]) return fitId(`openspec-spec-${slugify(spec[1])}`);
+  const delta = /^openspec\/changes\/(.+)\/specs\/(.+)\/spec\.md$/.exec(file);
+  if (delta?.[1] && delta[2]) {
+    return fitId(`openspec-change-${slugify(delta[1])}-spec-${slugify(delta[2])}`);
+  }
+  const change = /^openspec\/changes\/(.+)\/(proposal|design|tasks)\.md$/.exec(file);
+  if (change?.[1] && change[2]) {
+    return fitId(`openspec-change-${slugify(change[1])}-${change[2]}`);
+  }
+  return fitId(`openspec-${slugify(file.replace(/^openspec\//, "").replace(/\.md$/, ""))}`);
+}
+
+function titleFromText(text: string, fallback: string): string {
+  const match = /^#\s+(.+)$/m.exec(text);
+  return (match?.[1]?.trim() ?? fallback).slice(0, 120);
+}
+
+async function openspecNotes(
   root: string,
-): Promise<Array<{ id: string; file: string; text: string; type: NoteType; updated: string }>> {
+): Promise<
+  Array<{ id: string; file: string; text: string; type: NoteType; updated: string; kind: string }>
+> {
   const results: Array<{
     id: string;
     file: string;
     text: string;
     type: NoteType;
     updated: string;
+    kind: string;
   }> = [];
-  const constitution = ".specify/memory/constitution.md";
-  try {
-    const text = await fs.readFile(resolveWithinRoot(root, constitution), "utf8");
-    const stat = await fs.stat(resolveWithinRoot(root, constitution));
-    results.push({
-      id: "spec-kit-constitution",
-      file: constitution,
-      text,
-      type: "constraint",
-      updated: stat.mtime.toISOString().slice(0, 10),
-    });
-  } catch {
-    // no spec-kit constitution
-  }
-  const files = await fg(["specs/**/spec.md", "specs/**/plan.md", "specs/**/tasks.md"], {
-    cwd: root,
-    onlyFiles: true,
-    ignore: ["**/node_modules/**"],
-  });
-  for (const file of files) {
+  for (const file of await openspecFiles(root)) {
     const text = await fs.readFile(resolveWithinRoot(root, file), "utf8");
     const stat = await fs.stat(resolveWithinRoot(root, file));
-    const type: NoteType = file.endsWith("spec.md")
-      ? "spec"
-      : file.endsWith("plan.md")
-        ? "decision"
-        : "howto";
-    const slug = file
-      .replace(/^specs\//, "")
-      .replace(/\.md$/, "")
-      .replace(/[^a-z0-9]+/gi, "-")
-      .toLowerCase();
+    const { kind, type } = openspecKind(file);
     results.push({
-      id: `spec-kit-${slug}`,
+      id: openspecId(file),
       file,
       text,
       type,
       updated: stat.mtime.toISOString().slice(0, 10),
+      kind,
     });
   }
   return results;
 }
 
-function specKitToNote(input: {
+function openspecToNote(input: {
   id: string;
   file: string;
   text: string;
   type: NoteType;
   updated: string;
+  kind: string;
 }): KnowledgeNote {
-  const titleMatch = /^#\s+(.+)$/m.exec(input.text);
-  const title = titleMatch?.[1]?.trim() ?? input.id;
+  const fallback = input.kind === "config" ? "OpenSpec project config" : input.id;
   return {
     id: input.id,
-    title: title.slice(0, 120),
+    title: titleFromText(input.text, fallback),
     type: input.type,
     status: "accepted",
-    tags: ["spec-kit"],
+    tags: ["openspec", input.kind],
     updated: input.updated,
     path: input.file,
     linkCount: 0,
     backlinkCount: 0,
-    source: "spec-kit",
+    source: "openspec",
     body: input.text.trim(),
     links: [],
     commits: [],
     mentions: [],
-    frontmatter: { source: "spec-kit", type: input.type },
+    frontmatter: { source: "openspec", type: input.type, openspec: { kind: input.kind } },
   };
 }
 
@@ -222,9 +259,9 @@ export async function loadKnowledge(root: string, knowledgeDir: string): Promise
     notes.push(parsed.note);
   }
 
-  for (const specNote of await specKitNotes(root)) {
-    if (byId.has(specNote.id)) continue;
-    const note = specKitToNote(specNote);
+  for (const openspecNote of await openspecNotes(root)) {
+    if (byId.has(openspecNote.id)) continue;
+    const note = openspecToNote(openspecNote);
     byId.set(note.id, note);
     notes.push(note);
   }
@@ -312,7 +349,7 @@ export async function proposeNote(
 }
 
 export function folderMismatch(note: KnowledgeNote, knowledgeDir: string): boolean {
-  if (note.source === "spec-kit") return false;
+  if (note.source === "openspec") return false;
   const expected = `${knowledgeDir}/${folderForType(note.type)}/`;
   return !note.path.startsWith(expected) && !note.path.startsWith(`${knowledgeDir}/inbox/`);
 }

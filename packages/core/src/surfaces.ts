@@ -51,3 +51,24 @@ export function sortSurfaces(surfaces: Surface[]): Surface[] {
       a.line - b.line,
   );
 }
+
+export function verifySurfaceSymbols(
+  surfaces: Surface[],
+  namesByFile: Map<string, Set<string>>,
+): Surface[] {
+  return surfaces.map((surface) => {
+    if (!surface.symbolName || !surface.symbolId) return surface;
+    const names = namesByFile.get(surface.file);
+    if (!names) return surface;
+    if (names.has(surface.symbolName)) return surface;
+    return {
+      ...surface,
+      symbolId: null,
+      confidence: "inferred",
+      metadata: {
+        ...surface.metadata,
+        linkReason: surface.metadata.linkReason ?? "symbol-not-in-graph",
+      },
+    };
+  });
+}

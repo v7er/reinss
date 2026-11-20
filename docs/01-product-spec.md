@@ -45,7 +45,7 @@ Primary persona: a developer working with one coding agent in a local repository
 | CLI | `reins` binary | Phase 1 |
 | MCP server | `reins mcp` over stdio | Phase 1 (three tools), completed Phase 5 |
 | Embeddable UI | `@reins/ui` React components | Phase 1 (GraphView), expanded Phase 5 |
-| Knowledge files | Markdown under `.reins/knowledge/` | Phase 4, contract fixed Phase 1 |
+| Knowledge files | Markdown under `.reins/knowledge/`, plus read-only OpenSpec under `openspec/` | Phase 4, contract fixed Phase 1 |
 
 ## 5. Functional requirements
 
@@ -85,9 +85,11 @@ A surface is a user-reachable entry point: an HTTP route, a CLI command, a page,
 | SURF-3 | M | Link every surface to a graph node when one exists. | `symbolId` is a real Trail node ID or `null` with a reason; no invented IDs. |
 | SURF-4 | M | List and filter surfaces. | Filter by kind, framework, path, and confidence; counts are exact for the current filter. |
 | SURF-5 | M | Trace a flow from a surface. | Route to handler to callees in one view, with the same depth and confidence controls as GRAPH-2. |
-| SURF-6 | S | Honor OpenAPI and Swagger documents when present. | Imported routes are marked `source: openapi` and deduplicated against code-detected routes. |
+| SURF-6 | S | Honor OpenAPI and Swagger documents when present. | JSON specs are marked `evidence: openapi` and deduplicated against code-detected routes; a code route wins. An `x-source-file` extension links the surface to its handler file, resolved from the spec folder or its nearest ancestor that contains the file. YAML specs remain open. |
 | SURF-7 | S | Add a detector without touching the engine. | A detector is a separate module with a fixture; registering it requires one line and one test file. |
 | SURF-8 | C | Discover package exports as public interfaces. | Workspace packages list exported symbols and their consumers. |
+| SURF-9 | M | Group surfaces by C1 component. | Components are discovered from workspace manifests; each surface carries a `componentId`; the five named kinds are webapp, mobile, backoffice, core, and cli. |
+| SURF-10 | S | Show which surfaces a Git range changed. | A surface reports `change.status` and `change.touched`; `touched` is true only when the surface line falls inside a changed hunk. |
 
 Surface IDs and detector contracts are in [03. Data contracts](03-data-contracts.md#5-surfaces).
 
@@ -102,7 +104,7 @@ Surface IDs and detector contracts are in [03. Data contracts](03-data-contracts
 | DIFF-5 | M | Detect reformat-only changes. | Equal token streams with different whitespace, comments, or line breaks are `reformatted`, never `modified`. |
 | DIFF-6 | M | Detect extraction and inlining. | A new function whose body came from the old body, with the old site now calling it, is `extracted`; the reverse is `inlined`, both with confidence. |
 | DIFF-7 | M | Produce a deterministic JSON result. | Same inputs, parser versions, and options produce byte-identical JSON after key ordering. |
-| DIFF-8 | M | Show a structural diff view. | Operations grouped by file; selecting one reveals before and after with the changed node highlighted. |
+| DIFF-8 | M | Show a structural diff view. | Operations grouped by file; selecting one reveals before and after with the changed node highlighted. The code panel also shows a line-level unified diff with `+` and `-` markers computed from both sources, not from Git. |
 | DIFF-9 | M | Support working tree, staged, commit range, and branch versus base. | Each range resolves through Git and reports the resolved commit SHAs. |
 | DIFF-10 | S | Support watch mode. | A file save updates only the changed file's result within 500 ms; the view keeps scroll position. |
 | DIFF-11 | S | Link a changed symbol into the graph and surfaces. | One click opens the graph centered on that node or the surface that reaches it. |
@@ -114,7 +116,7 @@ The operation vocabulary and matching order are in [03. Data contracts](03-data-
 
 | ID | Pri | Requirement | Acceptance |
 | --- | --- | --- | --- |
-| KNOW-1 | M | Store knowledge as committed markdown under `.reins/knowledge/`. | A note is readable and editable without Reins; the app never stores knowledge only in a database. |
+| KNOW-1 | M | Store knowledge as committed markdown under `.reins/knowledge/`, and read OpenSpec under `openspec/` as read-only knowledge. | A note is readable and editable without Reins; the app never stores knowledge only in a database. OpenSpec files are never written by Reins. |
 | KNOW-2 | M | Support note types: spec, decision, constraint, how-to, question. | Each type validates against a schema; an unknown type is rejected with a path and field. |
 | KNOW-3 | M | Link notes to notes, symbols, surfaces, commits, and files. | Links are stored in frontmatter, validated on load, and resolvable in both directions. |
 | KNOW-4 | M | Show backlinks. | Opening a note lists every note, symbol, and surface that references it. |
@@ -126,7 +128,7 @@ The operation vocabulary and matching order are in [03. Data contracts](03-data-
 | KNOW-10 | S | Detect constraint violations in a diff. | For each constraint note with a machine-checkable rule, report pass, fail, or not-applicable against the diff. |
 | KNOW-11 | C | Track note history. | Git history is the history; the app links to the commit that last changed a note. |
 
-The note schema and lifecycle are in [03. Data contracts](03-data-contracts.md#7-knowledge-notes).
+The note schema and lifecycle are in [03. Data contracts](03-data-contracts.md#7-knowledge-notes). The OpenSpec import is in [03.9](03-data-contracts.md#79-openspec-import).
 
 ### 5.6 Review workspace
 
@@ -163,6 +165,16 @@ The note schema and lifecycle are in [03. Data contracts](03-data-contracts.md#7
 
 Tool-by-tool contracts are in [06. AI harness](06-ai-harness.md#4-mcp-tools).
 
+### 5.9 Git GUI
+
+| ID | Pri | Requirement | Acceptance |
+| --- | --- | --- | --- |
+| GIT-1 | M | Show working tree status. | Every file reports staged, unstaged, untracked, or conflicted, with line counts when available. |
+| GIT-2 | M | Stage, unstage, and discard. | File-level operations return the new status; discard requires explicit confirmation. |
+| GIT-3 | M | Commit. | Message, amend, and sign-off; an empty message fails with `GIT_COMMIT_EMPTY`. |
+| GIT-4 | M | Show history. | Log with hash, author, date, and subject; a commit opens its semantic diff against its parent. |
+| GIT-5 | M | Keep destructive operations explicit. | No force push, no silent discard, no network call without a user action. |
+
 ## 6. Component contract
 
 These are the public props. Names are fixed for the embed surface; internals may change.
@@ -171,6 +183,7 @@ These are the public props. Names are fixed for the embed surface; internals may
 interface ReinsProviderProps {
   client: ReinsClient;                 // required, injected
   theme?: 'light' | 'dark' | 'system';
+  version?: number;                    // bump to refetch every view from the client
   initialFocus?: NavigationTarget;
   onNavigate?: (target: NavigationTarget) => void;
 }

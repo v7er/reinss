@@ -7,7 +7,7 @@ The package whitelist and the performance rules for Reins. Read this before addi
 | Area | Foundation | Rule |
 | --- | --- | --- |
 | Code graph | [Trail](https://github.com/trailhq) | Use `trail` CLI JSON through `packages/node/src/trail.ts`. Never parse `graft/` internals, never fork Trail. |
-| Specs | [github/spec-kit](https://github.com/github/spec-kit) | Read `.specify/memory/constitution.md` and `specs/**/{spec,plan,tasks}.md` as read-only knowledge notes. Do not copy spec-kit templates into this repo. |
+| Specs | [Fission-AI/OpenSpec](https://github.com/Fission-AI/OpenSpec) | Read `openspec/config.yaml`, `openspec/project.md`, `openspec/specs/**/spec.md`, and `openspec/changes/**/{proposal,design,tasks,spec}.md` as read-only knowledge notes. Do not copy OpenSpec templates into this repo. |
 | Review UI | React, embeddable | Every view is a React component with an injected `ReinsClient`. The review workspace is a component, not a page. |
 | Desktop | Tauri | Rust shell, system webview, and one Node sidecar over stdio. The sidecar is the same `RepoSession` used by the CLI and MCP. |
 | Graph canvas | `@xyflow/react` + `dagre` | Do not write a graph renderer. |
@@ -36,7 +36,10 @@ The package whitelist and the performance rules for Reins. Read this before addi
 | `@mantine/core` | ui, desktop | Components, theme, layout primitives. |
 | `@mantine/hooks` | ui, desktop | Hotkeys and small UI hooks. |
 | `@mantine/spotlight` | desktop | `Cmd+K` command palette. |
+| `@tabler/icons-react` | ui, desktop | Interface icons. |
 | `@uiw/react-codemirror` | ui | Code view. |
+| `@uiw/codemirror-theme-github` | ui | GitHub light and dark code themes. |
+| `@codemirror/view`, `@codemirror/state` | ui | CodeMirror extensions and line decorations. |
 | `@codemirror/lang-javascript` | ui | JS/TS highlighting. |
 | `@codemirror/lang-json` | ui | JSON highlighting. |
 | `react-markdown` | ui | Note preview. |
@@ -130,7 +133,9 @@ The desktop must open a repository without reading it.
 - `Cmd+K` is the only navigation. The Mantine Spotlight palette lists tools, recent tools, and repository actions.
 - No top bar. The center area shows one tool at a time. No permanent sidebar.
 - Mantine is the component and theme layer. Use Mantine primitives before custom CSS.
-- Apple-style tokens: system font stack, 12 to 16 px radii, hairline borders, translucent dock, blue accent, generous whitespace.
+- Apple-style tokens: system font stack, 12 to 16 px radii, hairline borders, generous whitespace.
+- Default light paper theme: `#e6d2a3` page, `#f8efdc` surfaces, `#2b2418` ink, `#6f5f45` muted, `#1f5f8b` accent.
+- Dark theme: `#171816` page, `#1f201d` surfaces, `#ecece6` ink, `#4dabf7` accent. The bottom-left toggle switches themes and Mantine persists the choice.
 - `MantineProvider` lives inside `ReinsProvider`. A host does not need its own provider.
 - Loading, empty, error, and truncated states are implemented.
 - Keyboard reachable, visible focus, AA contrast, no color-only meaning.
@@ -149,7 +154,7 @@ The desktop must open a repository without reading it.
 - Knowledge notes are committed markdown. Caches are disposable.
 - Agent proposals go to `.reins/knowledge/inbox/` with `status: proposed`.
 - Accepted notes are never edited by an agent without a human request.
-- Spec-kit files are read-only and marked `source: spec-kit`.
+- OpenSpec files are read-only and marked `source: openspec`.
 
 ## 7. Verification
 

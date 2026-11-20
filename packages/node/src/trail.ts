@@ -59,10 +59,37 @@ const statusSchema = z.object({
     .optional(),
 });
 
+const mapSymbolSchema = z.object({
+  name: z.string(),
+  kind: z.string(),
+  path: z.string(),
+  span: z.string(),
+  inDegree: z.number().optional(),
+});
+
+const mapSchema = z.object({
+  hotspots: z.array(mapSymbolSchema).optional(),
+  scopes: z
+    .array(
+      z.object({
+        dirs: z
+          .array(
+            z.object({
+              hubs: z.array(mapSymbolSchema).optional(),
+            }),
+          )
+          .optional(),
+      }),
+    )
+    .optional(),
+});
+
 export type TrailStatus = { nodes: number; inSync: boolean };
 export type TrailCallers = z.infer<typeof callersSchema>;
 export type TrailAsk = z.infer<typeof askSchema>;
 export type TrailSkeleton = z.infer<typeof skeletonSchema>;
+export type TrailMapSymbol = z.infer<typeof mapSymbolSchema>;
+export type TrailMap = { symbols: TrailMapSymbol[] };
 
 export const MIN_TRAIL_VERSION = "0.28.0";
 
@@ -178,9 +205,9 @@ export class TrailAdapter {
     depth: number;
     pathPrefix?: string;
   }): Promise<TrailCallers> {
-    const query = input.symbol.includes("#")
-      ? (input.symbol.split("#").pop() ?? input.symbol)
-      : input.symbol;
+    const hash = input.symbol.lastIndexOf("#");
+    const file = hash >= 0 ? input.symbol.slice(0, hash) : null;
+    const query = hash >= 0 ? input.symbol.slice(hash + 1) : input.symbol;
     const args = [
       "callers",
       query,
@@ -192,7 +219,10 @@ export class TrailAdapter {
       String(input.depth),
       "--no-refresh",
     ];
-    if (input.pathPrefix) args.push("--in", input.pathPrefix);
+    // A bare name matches the first symbol with that name. Scope to the symbol's file
+    // so two components both named Page do not resolve to the same root.
+    const scope = file ?? input.pathPrefix;
+    if (scope) args.push("--in", scope);
     const result = await runProcess({
       command: this.binary,
       args,
@@ -282,5 +312,46 @@ export class TrailAdapter {
       );
     }
     return parsed.data;
+  }
+
+  async map(): Promise<TrailMap> {
+    const result = await runProcess({
+      command: this.binary,
+      args: ["map", this.root, "--json", "--no-refresh"],
+      cwd: this.root,
+      timeoutMs: 15_000,
+    });
+    if (result.code !== 0) {
+      throw new ReinsError(
+        "TRAIL_FAILED",
+        `Trail map failed: ${result.stderr.trim().slice(-500)}`,
+        {
+          retryable: true,
+          details: { code: result.code },
+        },
+      );
+    }
+    const parsed = mapSchema.safeParse(JSON.parse(result.stdout));
+    if (!parsed.success) {
+      throw new ReinsError(
+        "TRAIL_FORMAT_UNSUPPORTED",
+        "Trail map JSON did not match the adapter schema.",
+        {
+          details: { issues: parsed.error.issues.map((i) => i.path.join(".")) },
+        },
+      );
+    }
+    const seen = new Set<string>();
+    const symbols: TrailMapSymbol[] = [];
+    const hubs = (parsed.data.scopes ?? []).flatMap((scope) =>
+      (scope.dirs ?? []).flatMap((dir) => dir.hubs ?? []),
+    );
+    for (const symbol of [...(parsed.data.hotspots ?? []), ...hubs]) {
+      const key = `${symbol.path}#${symbol.name}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      symbols.push(symbol);
+    }
+    return { symbols };
   }
 }

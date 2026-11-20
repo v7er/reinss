@@ -70,7 +70,7 @@ Validation rules:
 
 ### 3.1 Detection and versions
 
-- Minimum supported Trail: `0.28.0`, the first version verified to expose `status`, `callers`, `ask`, `skeleton`, and `build --check` with `--json`.
+- Minimum supported Trail: `0.28.0`, the first version verified to expose `status`, `callers`, `ask`, `skeleton`, `map`, and `build --check` with `--json`.
 - Tested range is recorded in `packages/node/src/trail/compat.ts`. Currently tested: `0.28.x`, with `0.30.x` added as soon as its JSON is recorded.
 - A newer major (1.x) is `TRAIL_VERSION_UNSUPPORTED` until a fixture and adapter update land.
 - Missing binary: `TRAIL_MISSING`. The UI offers a link to the Trail install docs; Reins never installs it.
@@ -85,6 +85,7 @@ Validation rules:
 | Stale check | `trail build <root> --check --json` | 30 s |
 | Callers | `trail callers <symbol> <root> --json [--direction in\|out] [--depth n] [--in path] [--no-refresh]` | 15 s |
 | Search | `trail ask <query> <root> --json --limit n [--in path] [--no-refresh]` | 15 s |
+| Graph nodes | `trail map <root> --json --no-refresh` | 15 s |
 | File symbols | `trail skeleton <file> <root> --json [--no-refresh]` | 10 s |
 
 No human-readable output is parsed. If a needed value is not in the JSON, the operation is not implemented rather than scraped from text.
@@ -351,6 +352,12 @@ interface SurfaceFilter {
   pathPrefix?: string;
   query?: string;
   confidence?: 'exact' | 'inferred';
+  evidence?: 'ast' | 'openapi' | 'config';
+  component?: string;                  // component id or kind
+  changed?: boolean;                   // only surfaces in the Git range
+  range?: DiffRange;                   // default working when changed is set
+  limit?: number;
+  offset?: number;
 }
 
 interface FlowRequest {
@@ -402,6 +409,14 @@ interface RepoStatus {
   surfaces: { count: number; stale: boolean };
 }
 
+interface BootstrapResult {
+  contractVersion: 1;
+  created: string[];                   // repo-relative paths created by this call
+  graphBuilt: boolean;
+  surfaces: number;
+  status: RepoStatus;
+}
+
 type ApiEnvelope<T> =
   | { contractVersion: 1; ok: true; data: T }
   | { contractVersion: 1; ok: false; error: ReinsError };
@@ -409,12 +424,101 @@ type ApiEnvelope<T> =
 
 The CLI prints the envelope with `--json`; the MCP server returns the payload without the envelope and maps errors to tool errors. Tauri returns the envelope. The envelope shape never varies by method.
 
+### 4.1 Bootstrap
+
+`bootstrap()` is the one-step setup used by `reins bootstrap` and the desktop `Cmd+K` action "Initialize repository". It is idempotent.
+
+- Creates `.reins/config.json`, `.reins/.gitignore`, and the six knowledge folders when missing, and lists each created path in `created`.
+- Builds the Trail graph when the status is not `ready`. A build failure does not fail the call; `status.graph.state` reports the reason.
+- Scans surfaces and returns the count.
+- Never overwrites an existing config. `init()` stays strict and fails with `CONFIG_INVALID` when a config exists.
+
+### 4.2 Graph node list
+
+`listSymbols({ limit?: number })` returns up to 100 `SymbolHit` rows from the existing graph, most connected first. It reads `trail map` and never builds the graph. Each row carries `id`, `name`, `kind`, `path`, `startLine`, `endLine`, `snippet: ""`, and `score` set to the node's in-degree. A missing graph fails with `TRAIL_FAILED`; callers that only need an empty state treat that as an empty list.
+
+### 4.3 Git status and history
+
+```ts
+interface GitFileStatus {
+  path: string;
+  oldPath: string | null;
+  index: string;                       // porcelain X
+  worktree: string;                    // porcelain Y
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  conflicted: boolean;
+  additions: number | null;            // null for binary or untracked
+  deletions: number | null;
+}
+
+interface GitStatus {
+  branch: string | null;
+  ahead: number;
+  behind: number;
+  files: GitFileStatus[];
+  clean: boolean;
+}
+
+interface GitCommit {
+  hash: string;
+  shortHash: string;
+  author: string;
+  email: string;
+  date: string;                        // ISO 8601
+  subject: string;
+  base: string | null;                 // parent hash, null for a root commit
+}
+
+interface GitCommitResult {
+  hash: string;
+  subject: string;
+  status: GitStatus;
+}
+```
+
+Rules:
+
+- Status comes from `git status --porcelain=v1 -z --branch`. Paths with spaces are safe because entries are NUL separated.
+- Line counts come from `git diff --numstat` and `git diff --cached --numstat`. A binary file reports `null`.
+- `gitStage`, `gitUnstage`, and `gitDiscard` take repository-relative paths and return the new status.
+- `gitDiscard` requires `confirm: true` and fails with `GIT_CONFIRM_REQUIRED` otherwise.
+- `gitCommit` requires a non-empty message and fails with `GIT_COMMIT_EMPTY` otherwise. It supports `amend` and `signoff`.
+- `gitLog` returns at most 200 commits, newest first, and accepts an optional file path.
+
 ## 5. Surfaces
 
 ### 5.1 Shape
 
 ```ts
 type SurfaceKind = 'http' | 'cli' | 'page' | 'screen' | 'export';
+
+type ComponentKind =
+  | 'webapp'
+  | 'mobile'
+  | 'backoffice'
+  | 'core'
+  | 'cli'
+  | 'service'
+  | 'library'
+  | 'unknown';
+
+interface Component {
+  id: string;
+  name: string;
+  kind: ComponentKind;
+  root: string;
+  packageName: string | null;
+  languages: string[];
+  surfaceCount: number;
+  changed: boolean;
+}
+
+interface SurfaceChange {
+  status: 'added' | 'deleted' | 'modified' | 'renamed';
+  touched: boolean;
+}
 
 interface Surface {
   id: string;
@@ -431,19 +535,43 @@ interface Surface {
   evidence: 'ast' | 'openapi' | 'config';
   detector: string;
   detectorVersion: number;
+  componentId: string;
+  change?: SurfaceChange | null;
   metadata: Record<string, string | number | boolean>;
 }
 
 interface SurfacePage {
   contractVersion: 1;
   items: Surface[];
+  components: Component[];
   total: number;
   offset: number;
   limit: number;
   truncated: boolean;
-  stale: boolean;
 }
 ```
+
+### 5.1.1 Components
+
+A component is a level-1 part of the project. The five named kinds are `webapp`, `mobile`, `backoffice`, `core`, and `cli`; `service`, `library`, and `unknown` cover the rest.
+
+- Discovery reads `package.json` workspaces, `pnpm-workspace.yaml`, `Cargo.toml` workspace members, and `go.work`. A workspace directory is a component when it has a manifest.
+- The root is always a component with `root: ""` and `id: "root"`. Files outside every workspace belong to it.
+- `kind` is inferred from the workspace path and package name. The first matching rule wins: mobile, backoffice, cli, webapp, core, service, library, unknown.
+- `id` is the slug of the workspace root, for example `apps-web`. The root is `root`.
+- A surface belongs to the component with the longest matching `root` prefix. `componentId` is never empty.
+- `surfaceCount` counts the surfaces that match the current filter, so it is exact for that filter.
+- `changed` is true when at least one listed surface in the component has a `change`.
+
+### 5.1.2 Change overlay
+
+`listSurfaces` accepts `range` and `changed`. When either is present, it resolves the Git range and compares each surface line with the changed hunks.
+
+- `change.status` is the file status in that range.
+- `change.touched` is true when the surface line falls inside a changed hunk, or when the file was added or deleted.
+- `change.touched` is false when only another part of the file changed.
+- A surface whose file is not in the range has `change: null`.
+- A Git failure leaves `change: null` and does not fail the request.
 
 `symbolId` rules:
 
@@ -516,7 +644,8 @@ Initial supported matrix:
 | 2 | `commander` | TS, JS | `.command()` and `.action()` |
 | 2 | `next-app` | TSX, JSX | `app/**/page.tsx`, `app/**/route.ts` exports |
 | 2 | `react-router` | TSX, JSX | `createBrowserRouter` route objects, `<Route path>` |
-| 6 | `fastapi` | Python | `@app.get`, `@router.post` |
+| 2 | `fastapi` | Python | `@app.get`, `@router.post` |
+| 2 | `openapi` | JSON | `openapi.json` and `swagger.json` paths and methods, deduplicated against code routes; `x-source-file` (operation, path, or document level) links a surface to its handler file, resolved from the spec folder or its nearest ancestor that contains the file. A surface without it is marked `linkReason: missing-x-source-file` and flow refuses to trace it with `SURFACE_UNTRACEABLE` |
 | 6 | `expo` | TSX | screen files in a router directory |
 
 ## 6. Semantic diff
@@ -526,9 +655,11 @@ Initial supported matrix:
 ```ts
 type DiffRange =
   | { mode: 'working' }
+  | { mode: 'unstaged' }
   | { mode: 'staged' }
   | { mode: 'range'; base: string; head: string }
-  | { mode: 'base'; base?: string };   // merge-base of HEAD and base, default main
+  | { mode: 'base'; base?: string }   // merge-base of HEAD and base, default main
+  | { mode: 'commit'; hash: string }; // one commit against its parent, root against empty
 
 interface DiffRequest {
   range: DiffRange;
@@ -540,10 +671,12 @@ interface DiffRequest {
 
 Resolution:
 
-- `working`: index to working tree, including untracked files.
+- `working`: `HEAD` to working tree, including untracked files.
+- `unstaged`: index to working tree, including untracked files.
 - `staged`: `HEAD` to index.
 - `range`: `base` to `head`, both resolved to commit SHAs.
 - `base`: `git merge-base <base> HEAD` to working tree.
+- `commit`: one commit against its parent. A root commit has `baseCommit: null` and every file is added.
 - The response reports the resolved SHAs. A range that cannot resolve fails with `GIT_RANGE_INVALID`.
 
 ### 6.2 Result
@@ -565,6 +698,21 @@ interface SourceSpan {
   startLine: number;
   endLine: number;
   name?: string;
+}
+
+interface DiffLine {
+  kind: 'context' | 'added' | 'removed';
+  oldLine: number | null;
+  newLine: number | null;
+  text: string;
+}
+
+interface DiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: DiffLine[];
 }
 
 interface SemanticChange {
@@ -601,6 +749,7 @@ interface FileDiff {
   degraded: boolean;
   degradedReason?: 'parse-error' | 'too-large' | 'unsupported-language' | 'worker-failed';
   changes: SemanticChange[];
+  hunks: DiffHunk[];                   // line-level view, computed from both sources
   stats: Record<ChangeKind, number>;
 }
 
@@ -640,6 +789,7 @@ Rules:
 - `extracted` and `inlined` are separate operations only when the old or new site also changed. A pure move into a new function with no call-site change is `moved` plus `added`, with a low-confidence note. Do not overclaim.
 - `confidence: 'high'` requires exact subtree hash or exact token equality. `'medium'` requires a sibling match with equal kind and ≥ 70% child overlap. `'low'` is a structural guess and must include a reason.
 - Unparseable or oversized files produce a `degraded: true` file with zero semantic operations. The UI shows the line diff and the reason.
+- `hunks` is a line-level view of the same two sources, not a Git diff. It is computed in the diff engine so the UI never shells out to Git. Hunk lines carry both old and new line numbers; `added` lines have no old number and `removed` lines have no new number. Files above the line-diff cap return an empty `hunks` array and the UI falls back to the full-file view.
 - Sorting: files by path, changes by `(from?.startLine ?? to?.startLine ?? 0, kind, id)`. `stats` counts every operation once.
 
 ### 6.4 Stable IDs
@@ -868,6 +1018,31 @@ Rules:
 - The writer uses a temporary file and rename. A failed write leaves no partial note.
 - `source` is provenance metadata and is stored under `provenance` in frontmatter.
 
+### 7.9 OpenSpec import
+
+Reins reads [OpenSpec](https://github.com/Fission-AI/OpenSpec) files as read-only knowledge notes. OpenSpec is the project knowledge base: brief, requirements, technical decisions, and the task plan for each change.
+
+| Path | Type | Kind tag |
+| --- | --- | --- |
+| `openspec/config.yaml` | `constraint` | `config` |
+| `openspec/project.md` | `spec` | `project` |
+| `openspec/specs/**/spec.md` | `spec` | `spec` |
+| `openspec/changes/**/proposal.md` | `spec` | `proposal` |
+| `openspec/changes/**/design.md` | `decision` | `design` |
+| `openspec/changes/**/tasks.md` | `howto` | `tasks` |
+| `openspec/changes/**/specs/**/spec.md` | `spec` | `spec` |
+
+Rules:
+
+- Imported notes have `status: accepted`, `source: openspec`, and tags `["openspec", <kind>]`.
+- The `changes/**` patterns include `changes/archive/`, so finished changes stay readable.
+- The id is derived from the path: `openspec-spec-<capability>`, `openspec-change-<change>-<artifact>`, `openspec-change-<change>-spec-<capability>`, `openspec-config`, or `openspec-project`. Ids longer than 64 characters are truncated with a stable hash suffix.
+- The title is the first `# ` heading, or the id when there is no heading. `openspec/config.yaml` uses the fixed title `OpenSpec project config`.
+- `updated` is the file modification date. The body is the file text, unchanged.
+- Imported notes carry no typed links and no commits. They are not proposals and never enter `inbox/`.
+- Reins never writes to `openspec/`. A Reins note with the same id wins; the OpenSpec file is skipped.
+- `reins spec` lists the imported files. `reins notes` includes them, and `reins pack` includes imported constraints and decisions.
+
 ## 8. Check report
 
 ```ts
@@ -974,6 +1149,7 @@ interface ReinsError {
 | `SYMBOL_NOT_FOUND` | Query matched no symbol. | no | CLI exit 1, MCP error |
 | `AMBIGUOUS_SYMBOL` | Multiple roots and no strict choice. | no | CLI exit 1 with candidates |
 | `SURFACE_NOT_FOUND` | Surface id unknown. | no | CLI exit 1 |
+| `SURFACE_UNTRACEABLE` | OpenAPI surface has no `x-source-file`; `details.reason` is `missing-x-source-file`. | no | CLI exit 1, flow warning |
 | `GRAPH_TRUNCATED` | Hard cap reached and the caller refused truncation. | no | CLI exit 3 |
 | `GIT_FAILED` | Git command failed. | yes | CLI exit 2 |
 | `GIT_RANGE_INVALID` | Range does not resolve. | no | CLI exit 1 |
@@ -1009,7 +1185,7 @@ interface CacheFile<T> {
 
 | File | `data` | Rebuild cost |
 | --- | --- | --- |
-| `surfaces.json` | `{ surfaces: Surface[], diagnostics: ScanDiagnostic[] }` | Full detector scan |
+| `surfaces.json` | `{ surfaces: Surface[], diagnostics: ScanDiagnostic[] }` | Full detector scan. Written only when the working tree is clean; a dirty tree rescans so line numbers stay current. |
 | `knowledge-index.json` | `{ notes: NoteSummary[], backlinks: Record<string, string[]> }` | Read and parse every note |
 | `diff/<key>.json` | `SemanticDiff` | Parse and match both sides |
 | `session.json` | `{ recentRepos: string[], lastRepo: string, window?: {...} }` | None, local state |
@@ -1042,6 +1218,14 @@ interface TauriBridge {
 
 The Rust side forwards `reins_invoke` to the Node sidecar over newline-delimited JSON. The sidecar is `apps/cli/dist/serve.js` and shares `RepoSession` with the CLI and MCP.
 
+The sidecar watches the open repository with `fs.watch` and debounces changes for 120 ms. It writes unsolicited event lines to stdout:
+
+```json
+{ "event": "change", "data": { "paths": ["src/app.ts"] } }
+```
+
+The Rust shell routes lines with an `id` to the waiting request and forwards lines with an `event` to the renderer as the Tauri event `reins://change`. Writes under `node_modules/`, `graft/`, `dist/`, `out/`, `.trail/`, `.reins/.cache/`, and the rest of `.git/` are ignored; `.git/index`, `.git/HEAD`, and `.git/refs/` are not, so staging and commits refresh the view.
+
 The embeddable client:
 
 ```ts
@@ -1061,6 +1245,7 @@ Rules:
 
 - `call` validates params with the same core schema as the server side. A renderer bug produces a typed validation error, not a crash.
 - `ReinsClient` has no repository path. The session bound to the client knows the repository.
+- `subscribe` is optional. The Tauri client implements it by listening for `reins://change` and mapping each payload to `graph-changed`. `ReinsProvider` bumps a data version on every event, and `useAsync` refetches when it changes, so every mounted view shows the latest repository state. The host can bump the same version through the `version` prop after an explicit refresh, which refetches every view without remounting it.
 - The default clients are Tauri invoke for the desktop app and an in-memory client for tests and docs. An HTTP client is an interface a host may implement; Reins does not ship a local HTTP server.
 - No component calls `call` directly. Each view uses a small hook that owns loading, error, and cancellation state.
 

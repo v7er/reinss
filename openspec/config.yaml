@@ -1,0 +1,26 @@
+schema: spec-driven
+
+context: |
+  Reins is a local-first desktop app and React component set for code structure,
+  project intent, and semantic review. It wraps Trail for the code graph and
+  reads OpenSpec as read-only project knowledge.
+
+  Commands: pnpm build, pnpm test, pnpm typecheck, pnpm check, pnpm dev.
+  CLI: node apps/cli/dist/main.js after build.
+
+  Constraints:
+  - Trail's graft/ is the only code graph. Never copy it into another store.
+  - ReinsApi in @reins/core is the only operation surface.
+  - @reins/core imports no node:*, Tauri, React, or filesystem module.
+  - @reins/ui imports no @reins/node, Tauri, or node:*.
+  - No network by default. No repository code execution.
+  - No new dependency without a row in RULES.md.
+  - OpenSpec under openspec/ is read-only. Reins never writes to it.
+  - No em dash characters in prose.
+
+rules:
+  proposal:
+    - State what is out of scope.
+    - Name the affected capability paths under openspec/specs/.
+  tasks:
+    - End every task with the verification command that proves it.

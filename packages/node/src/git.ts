@@ -1,6 +1,13 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { type DiffRange, ReinsError } from "@reins/core";
+import {
+  type DiffRange,
+  type GitCommit,
+  type GitCommitResult,
+  type GitFileStatus,
+  type GitStatus,
+  ReinsError,
+} from "@reins/core";
 import { resolveWithinRoot } from "./paths.js";
 import { runProcess } from "./process.js";
 
@@ -16,8 +23,14 @@ export interface FileChange {
   status: "added" | "deleted" | "modified" | "renamed" | "copied";
 }
 
+export interface ChangedFile {
+  path: string;
+  status: "added" | "deleted" | "modified" | "renamed";
+  ranges: Array<{ start: number; end: number }>;
+}
+
 export interface ResolvedRange {
-  mode: "working" | "staged" | "range" | "base";
+  mode: "working" | "unstaged" | "staged" | "range" | "base" | "commit";
   baseCommit: string | null;
   headCommit: string | null;
   mergeBase: string | null;
@@ -76,6 +89,17 @@ export class GitAdapter {
         changes: [...changes, ...untracked],
       };
     }
+    if (range.mode === "unstaged") {
+      const changes = await this.changesFrom(["diff", "--name-status"]);
+      const untracked = await this.untracked();
+      return {
+        mode: "unstaged",
+        baseCommit: head,
+        headCommit: null,
+        mergeBase: null,
+        changes: [...changes, ...untracked],
+      };
+    }
     if (range.mode === "staged") {
       return {
         mode: "staged",
@@ -96,6 +120,22 @@ export class GitAdapter {
         changes: await this.changesFrom(["diff", "--name-status", `${base}..${target}`]),
       };
     }
+    if (range.mode === "commit") {
+      const head = (await this.git(["rev-parse", range.hash])).trim();
+      let base: string | null = null;
+      try {
+        base = (await this.git(["rev-parse", `${head}^`])).trim();
+      } catch {
+        base = null;
+      }
+      return {
+        mode: "commit",
+        baseCommit: base,
+        headCommit: head,
+        mergeBase: null,
+        changes: await this.changesFrom(["show", "--name-status", "--format=", head]),
+      };
+    }
     const baseRef = range.base ?? "main";
     let mergeBase: string;
     try {
@@ -110,6 +150,196 @@ export class GitAdapter {
       mergeBase,
       changes: await this.changesFrom(["diff", "--name-status", mergeBase]),
     };
+  }
+
+  async changedLines(range: DiffRange): Promise<Map<string, ChangedFile>> {
+    const resolved = await this.resolveRange(range);
+    const map = new Map<string, ChangedFile>();
+    for (const change of resolved.changes) {
+      const status = change.status === "copied" ? "renamed" : change.status;
+      map.set(change.path, { path: change.path, status, ranges: [] });
+    }
+    const args = ["diff", "-U0", "--no-color", "--no-ext-diff"];
+    if (range.mode === "working") args.push("HEAD");
+    else if (range.mode === "staged") args.push("--cached");
+    else if (range.mode === "range") {
+      args.push(`${resolved.baseCommit}..${resolved.headCommit}`);
+    } else if (range.mode === "base") {
+      args.push(resolved.baseCommit ?? "HEAD");
+    }
+    const out = await this.git(args);
+    let current: ChangedFile | null = null;
+    for (const line of out.split("\n")) {
+      if (line.startsWith("diff --git ")) {
+        current = null;
+        continue;
+      }
+      if (line.startsWith("+++ ")) {
+        const target = line.slice(4).trim();
+        if (target === "/dev/null") {
+          current = null;
+          continue;
+        }
+        const file = target.replace(/^b\//, "");
+        current = map.get(file) ?? { path: file, status: "modified", ranges: [] };
+        map.set(file, current);
+        continue;
+      }
+      const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      if (hunk && current) {
+        const start = Number(hunk[1]);
+        const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
+        if (count > 0) current.ranges.push({ start, end: start + count - 1 });
+      }
+    }
+    for (const change of resolved.changes) {
+      const entry = map.get(change.path);
+      if (entry && entry.status === "added" && entry.ranges.length === 0) {
+        entry.ranges.push({ start: 1, end: Number.MAX_SAFE_INTEGER });
+      }
+    }
+    return map;
+  }
+
+  async status(): Promise<GitStatus> {
+    const out = await this.git(["status", "--porcelain=v1", "-z", "--branch"]);
+    const entries = out.split("\0");
+    let branch: string | null = null;
+    let ahead = 0;
+    let behind = 0;
+    const files: GitFileStatus[] = [];
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i];
+      if (!entry) continue;
+      if (entry.startsWith("## ")) {
+        const header = entry.slice(3);
+        const match = /^(.*?)(?:\.\.\..*?)?(?: \[(.*?)\])?$/.exec(header);
+        branch = match?.[1] ?? null;
+        const tracking = match?.[2] ?? "";
+        ahead = Number(/ahead (\d+)/.exec(tracking)?.[1] ?? 0);
+        behind = Number(/behind (\d+)/.exec(tracking)?.[1] ?? 0);
+        continue;
+      }
+      const index = entry[0] ?? " ";
+      const worktree = entry[1] ?? " ";
+      const path = entry.slice(3);
+      let oldPath: string | null = null;
+      if (index === "R" || index === "C" || worktree === "R" || worktree === "C") {
+        oldPath = entries[i + 1] ?? null;
+        i += 1;
+      }
+      const untracked = index === "?" && worktree === "?";
+      const conflicted =
+        index === "U" ||
+        worktree === "U" ||
+        (index === "A" && worktree === "A") ||
+        (index === "D" && worktree === "D");
+      files.push({
+        path,
+        oldPath,
+        index,
+        worktree,
+        staged: !untracked && !conflicted && index !== " " && index !== "?",
+        unstaged: !untracked && !conflicted && worktree !== " " && worktree !== "?",
+        untracked,
+        conflicted,
+        additions: null,
+        deletions: null,
+      });
+    }
+    const [unstaged, staged] = await Promise.all([
+      this.numstat(["diff", "--numstat"]),
+      this.numstat(["diff", "--cached", "--numstat"]),
+    ]);
+    for (const file of files) {
+      const counts = unstaged.get(file.path) ?? staged.get(file.path);
+      if (counts) {
+        file.additions = counts.additions;
+        file.deletions = counts.deletions;
+      }
+    }
+    return { branch, ahead, behind, files, clean: files.length === 0 };
+  }
+
+  private async numstat(
+    args: string[],
+  ): Promise<Map<string, { additions: number; deletions: number }>> {
+    const out = await this.git(args).catch(() => "");
+    const map = new Map<string, { additions: number; deletions: number }>();
+    for (const line of out.split("\n")) {
+      if (!line.trim()) continue;
+      const [additions, deletions, ...rest] = line.split("\t");
+      const file = rest.join("\t");
+      if (!file) continue;
+      map.set(file, {
+        additions: additions === "-" ? 0 : Number(additions),
+        deletions: deletions === "-" ? 0 : Number(deletions),
+      });
+    }
+    return map;
+  }
+
+  async stage(paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    await this.git(["add", "--", ...paths]);
+  }
+
+  async unstage(paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    try {
+      await this.git(["restore", "--staged", "--", ...paths]);
+    } catch {
+      await this.git(["rm", "--cached", "--", ...paths]);
+    }
+  }
+
+  async discard(paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    await this.git(["restore", "--", ...paths]);
+  }
+
+  async commit(input: {
+    message: string;
+    amend?: boolean;
+    signoff?: boolean;
+  }): Promise<GitCommitResult> {
+    const message = input.message.trim();
+    if (!message) {
+      throw new ReinsError("GIT_COMMIT_EMPTY", "A commit message is required.");
+    }
+    const args = ["commit", "-m", message];
+    if (input.amend) args.push("--amend");
+    if (input.signoff) args.push("--signoff");
+    await this.git(args);
+    const hash = (await this.git(["rev-parse", "HEAD"])).trim();
+    const subject = (await this.git(["log", "-1", "--format=%s"])).trim();
+    return { hash, subject, status: await this.status() };
+  }
+
+  async log(limit = 30, file?: string): Promise<GitCommit[]> {
+    const args = [
+      "log",
+      `-n${Math.min(Math.max(limit, 1), 200)}`,
+      "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%P",
+    ];
+    if (file) args.push("--", file);
+    const out = await this.git(args).catch(() => "");
+    const commits: GitCommit[] = [];
+    for (const line of out.split("\n")) {
+      if (!line.trim()) continue;
+      const [hash, shortHash, author, email, date, subject, parents] = line.split("\x1f");
+      if (!hash) continue;
+      commits.push({
+        hash,
+        shortHash: shortHash ?? hash.slice(0, 7),
+        author: author ?? "",
+        email: email ?? "",
+        date: date ?? "",
+        subject: subject ?? "",
+        base: parents?.split(" ")[0] || null,
+      });
+    }
+    return commits;
   }
 
   private async tryHead(): Promise<string | null> {

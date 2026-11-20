@@ -149,9 +149,11 @@ interface FsPort {
 }
 
 interface WatchPort {
-  watch(root: string, patterns: string[], onChange: (paths: string[]) => void): Disposable;
+  watch(root: string, onChange: (paths: string[]) => void): Disposable;
 }
 ```
+
+`watchRepo` in `@reins/node` implements this port with a recursive `fs.watch`, a 120 ms debounce, and an ignore list for build output, caches, and `.git` internals other than `index`, `HEAD`, and `refs/`.
 
 Port rules:
 
@@ -169,6 +171,7 @@ interface ReinsApi {
   status(): Promise<RepoStatus>;
   refreshGraph(opts?: RefreshOptions): Promise<RepoStatus>;
   searchSymbols(q: string, opts?: SearchOptions): Promise<SymbolHit[]>;
+  listSymbols(req?: SymbolListRequest): Promise<SymbolHit[]>;
   graph(req: GraphRequest): Promise<GraphSlice>;
   listSurfaces(f?: SurfaceFilter): Promise<SurfacePage>;
   flow(req: FlowRequest): Promise<GraphSlice>;
@@ -188,6 +191,7 @@ Transport mapping:
 | `status` | `reins status` | `status` | `reins_status` |
 | `refreshGraph` | `reins build` | `refreshGraph` | not exposed |
 | `searchSymbols` | `reins search <q>` | `searchSymbols` | `reins_symbols` |
+| `listSymbols` | `reins symbols` | `listSymbols` | `reins_symbols_list` |
 | `graph` | `reins callers`, `reins callees`, `reins graph` | `graph` | `reins_callers` |
 | `listSurfaces` | `reins surfaces` | `listSurfaces` | `reins_surfaces` |
 | `flow` | `reins flow <target>` | `flow` | `reins_flow` |
@@ -208,6 +212,7 @@ Adding a method means adding it to core, then all three transports, then one con
 <repo>/
 ├── graft/                         Trail graph. Owned by Trail. Never written by Reins.
 ├── .trail/                        Trail learnings. Read by `reins check --learnings` later.
+├── openspec/                      OpenSpec knowledge. Read-only. Never written by Reins.
 └── .reins/                        Committed unless marked cache.
     ├── config.json                Repository config and detector options.
     ├── knowledge/
@@ -229,6 +234,7 @@ Adding a method means adding it to core, then all three transports, then one con
 Rules:
 
 - The knowledge markdown is the source of truth. Every index under `.cache` is rebuildable in one pass and has no data that exists only there.
+- `openspec/` is read-only. Reins imports it as knowledge and never writes to it.
 - No second graph store. Reins never copies `graft/` into SQLite, JSON, or memory-mapped files of its own. Graph slices are computed per request and cached only in memory for the process lifetime.
 - A deleted `.cache` must produce a correct app with a slower first query. This is tested.
 - Config is JSON. Knowledge frontmatter is YAML. Do not add a second YAML config surface.

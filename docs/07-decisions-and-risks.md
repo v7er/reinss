@@ -227,11 +227,23 @@ Accepted decisions are binding until a new decision record supersedes them. Reje
 
 **Context.** The first shell used hand-written CSS and a top bar. It worked, but the visual language was generic and the top bar competed with the command palette for navigation.
 
-**Decision.** Use Mantine for components, theme, and layout primitives. Apply an Apple-style visual language: system font stack, hairline borders, 12 to 16 px radii, translucent dock, blue accent, generous whitespace. Remove the top bar. `Cmd+K` opens a Mantine Spotlight palette, which is the only navigation. `MantineProvider` lives inside `ReinsProvider` so embedded hosts get the same theme.
+**Decision.** Use Mantine for components, theme, and layout primitives. Apply an Apple-style visual language with a warm paper light theme: `#e6d2a3` page, `#f8efdc` surfaces, `#2b2418` ink, `#6f5f45` muted, `#1f5f8b` accent, system font stack, hairline borders, 12 to 16 px radii, generous whitespace. Remove the top bar. `Cmd+K` opens a Mantine Spotlight palette, which is the only navigation. `MantineProvider` lives inside `ReinsProvider` so embedded hosts get the same theme. A bottom-left toggle switches between the paper light theme and the dark/blue theme; Mantine persists the choice.
 
-**Consequences.** The UI gains a consistent component layer and a smaller custom CSS surface. Mantine adds about 300 KB of CSS and 100 KB of JavaScript to the renderer. The palette is the only way to switch tools, so discoverability depends on the dock hint and the `Cmd+K` shortcut. The embeddable components now require Mantine CSS, which `@reins/ui/styles.css` imports.
+**Consequences.** The UI gains a consistent component layer and a smaller custom CSS surface. The code view uses CodeMirror with the GitHub light and dark themes, line numbers, and changed-line highlights. Mantine adds about 300 KB of CSS and 100 KB of JavaScript to the renderer. The palette is the only way to switch tools, so discoverability depends on the dock hint and the `Cmd+K` shortcut. The embeddable components now require Mantine CSS, which `@reins/ui/styles.css` imports.
 
 **Rejected.** Keeping the top bar and adding Mantine only to panels. That leaves two navigation systems. Writing a custom design system instead of Mantine. That is more code for the same result.
+
+### ADR-019 OpenSpec replaces spec-kit as the knowledge source
+
+**Status:** accepted. Supersedes the spec-kit import.
+
+**Context.** Spec-kit imports a constitution and three files per feature. It covers requirements, but not the brief, the technical decisions, or the task plan in one place. OpenSpec keeps a project config, current specs, and one folder per change with a proposal, delta specs, design, and tasks. Archived changes stay in the repository. That is the knowledge an agent needs before reading code.
+
+**Decision.** Read `openspec/` as read-only knowledge. Map `config.yaml` to a constraint, `specs/**/spec.md` and `proposal.md` to specs, `design.md` to a decision, and `tasks.md` to a how-to. Mark every imported note `source: openspec`. `reins spec` lists the files. Reins never writes to `openspec/`.
+
+**Consequences.** The knowledge ledger now carries the project brief, requirements, technical decisions, and the plan for in-flight and archived changes. The spec-kit importer is removed. A Reins note with the same id wins over an imported file. OpenSpec's own workflow skills stay in OpenSpec; Reins only reads their output.
+
+**Rejected.** Keeping both importers. Two spec formats mean two mappings, two test fixtures, and an unclear first place to look. Parsing only `openspec/specs/` and ignoring changes. That loses the decisions and the plan, which are the reason to read OpenSpec first.
 
 ## 2. Rejected ideas
 

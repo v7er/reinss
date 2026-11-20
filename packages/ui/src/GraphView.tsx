@@ -138,6 +138,13 @@ export function GraphView({
     );
   }
   if (state.error) {
+    if ((state.error as Error & { code?: string }).code === "SYMBOL_NOT_FOUND") {
+      return (
+        <Text size="sm" c="dimmed">
+          No graph context for this symbol. Rebuild the graph after adding files.
+        </Text>
+      );
+    }
     return (
       <Alert color="red" variant="light" title="Graph unavailable">
         {state.error.message}

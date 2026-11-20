@@ -8,7 +8,7 @@ import {
   type NoteProposal,
   type NoteType,
 } from "@reins/core";
-import { createSession, realRoot, startMcpServer } from "@reins/node";
+import { createSession, listOpenSpecFiles, realRoot, startMcpServer } from "@reins/node";
 import { Command } from "commander";
 
 const program = new Command();
@@ -90,6 +90,30 @@ program
   });
 
 program
+  .command("bootstrap")
+  .description("Initialize config, knowledge folders, graph, and surfaces in one step")
+  .argument("[dir]", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (dir: string, opts: { json?: boolean }) => {
+    try {
+      const session = await sessionFor(dir);
+      const result = await session.bootstrap();
+      if (opts.json) ok(result);
+      else {
+        process.stdout.write(`created   ${result.created.length} paths\n`);
+        for (const item of result.created) process.stdout.write(`  ${item}\n`);
+        process.stdout.write(`graph     ${result.graphBuilt ? "built" : "ready"}\n`);
+        process.stdout.write(`surfaces  ${result.surfaces}\n`);
+        process.stdout.write(
+          `repo      ${result.status.repo.name} (${result.status.graph.state})\n`,
+        );
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
   .command("status")
   .argument("[dir]", "repository root", ".")
   .option("--json", "machine-readable output")
@@ -114,6 +138,28 @@ program
     try {
       const session = await sessionFor(dir);
       const hits = await session.searchSymbols(query, { limit: Number(opts.limit) });
+      if (opts.json) ok(hits);
+      else {
+        for (const hit of hits) {
+          process.stdout.write(
+            `${hit.path}${hit.startLine ? `:${hit.startLine}` : ""}  ${hit.name}\n`,
+          );
+        }
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
+  .command("symbols")
+  .argument("[dir]", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .option("--limit <n>", "max results", "20")
+  .action(async (dir: string, opts: { json?: boolean; limit: string }) => {
+    try {
+      const session = await sessionFor(dir);
+      const hits = await session.listSymbols({ limit: Number(opts.limit) });
       if (opts.json) ok(hits);
       else {
         for (const hit of hits) {
@@ -199,27 +245,63 @@ program
   .option("--json", "machine-readable output")
   .option("--kind <kind>", "http, cli, page, screen, export")
   .option("--framework <name>", "framework filter")
+  .option("--component <id>", "component id or kind, for example webapp")
+  .option("--changed", "only surfaces touched by the Git range")
+  .option("--range <mode>", "working, staged, or base", "working")
   .option("--query <text>", "text filter")
   .option("--limit <n>", "max results", "100")
   .action(
     async (
       dir: string,
-      opts: { json?: boolean; kind?: string; framework?: string; query?: string; limit: string },
+      opts: {
+        json?: boolean;
+        kind?: string;
+        framework?: string;
+        component?: string;
+        changed?: boolean;
+        range: string;
+        query?: string;
+        limit: string;
+      },
     ) => {
       try {
         const session = await sessionFor(dir);
+        const range: DiffRange =
+          opts.range === "staged"
+            ? { mode: "staged" }
+            : opts.range === "base"
+              ? { mode: "base" }
+              : { mode: "working" };
         const page = await session.listSurfaces({
           ...(opts.kind ? { kind: opts.kind as never } : {}),
           ...(opts.framework ? { framework: opts.framework } : {}),
+          ...(opts.component ? { component: opts.component } : {}),
+          ...(opts.changed ? { changed: true } : {}),
+          ...(opts.changed || opts.range !== "working" ? { range } : {}),
           ...(opts.query ? { query: opts.query } : {}),
           limit: Number(opts.limit),
         });
         if (opts.json) ok(page);
         else {
+          const groups = new Map<string, typeof page.items>();
           for (const surface of page.items) {
+            const list = groups.get(surface.componentId) ?? [];
+            list.push(surface);
+            groups.set(surface.componentId, list);
+          }
+          for (const [id, surfaces] of groups) {
+            const component = page.components.find((item) => item.id === id);
             process.stdout.write(
-              `${surface.kind.padEnd(6)} ${surface.id}  ${surface.file}:${surface.line}\n`,
+              `${component?.name ?? id} (${component?.kind ?? "unknown"})${component?.changed ? " *" : ""}\n`,
             );
+            for (const surface of surfaces) {
+              const change = surface.change
+                ? ` [${surface.change.touched ? "changed" : "file"}]`
+                : "";
+              process.stdout.write(
+                `  ${surface.kind.padEnd(6)} ${surface.id}  ${surface.file}:${surface.line}${change}\n`,
+              );
+            }
           }
           process.stdout.write(`${page.total} surfaces\n`);
         }
@@ -260,15 +342,24 @@ program
   .option("--base <ref>", "diff from a merge base")
   .option("--from <ref>", "range base")
   .option("--to <ref>", "range head")
+  .option("--commit <hash>", "diff one commit against its parent")
   .action(
     async (
       dir: string,
-      opts: { json?: boolean; staged?: boolean; base?: string; from?: string; to?: string },
+      opts: {
+        json?: boolean;
+        staged?: boolean;
+        base?: string;
+        from?: string;
+        to?: string;
+        commit?: string;
+      },
     ) => {
       try {
         const session = await sessionFor(dir);
-        const range: DiffRange =
-          opts.from && opts.to
+        const range: DiffRange = opts.commit
+          ? { mode: "commit", hash: opts.commit }
+          : opts.from && opts.to
             ? { mode: "range", base: opts.from, head: opts.to }
             : opts.staged
               ? { mode: "staged" }
@@ -292,6 +383,172 @@ program
       }
     },
   );
+
+const git = program.command("git").description("Git status, staging, commits, and history");
+
+git
+  .command("status")
+  .argument("[dir]", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (dir: string, opts: { json?: boolean }) => {
+    try {
+      const session = await sessionFor(dir);
+      const status = await session.gitStatus();
+      if (opts.json) ok(status);
+      else {
+        const tracking = [
+          status.ahead ? `ahead ${status.ahead}` : "",
+          status.behind ? `behind ${status.behind}` : "",
+        ]
+          .filter(Boolean)
+          .join(", ");
+        process.stdout.write(`${status.branch ?? "detached"}${tracking ? ` (${tracking})` : ""}\n`);
+        for (const file of status.files) {
+          const state = file.conflicted
+            ? "conflict"
+            : file.untracked
+              ? "untracked"
+              : `${file.index}${file.worktree}`;
+          const counts =
+            file.additions !== null ? ` +${file.additions} -${file.deletions ?? 0}` : "";
+          process.stdout.write(`${state.padEnd(10)} ${file.path}${counts}\n`);
+        }
+        process.stdout.write(`${status.files.length} files\n`);
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+git
+  .command("stage")
+  .argument("<paths...>", "files to stage")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (paths: string[], opts: { dir: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(opts.dir);
+      const status = await session.gitStage({ paths });
+      if (opts.json) ok(status);
+      else process.stdout.write(`staged ${paths.length} files\n`);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+git
+  .command("unstage")
+  .argument("<paths...>", "files to unstage")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (paths: string[], opts: { dir: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(opts.dir);
+      const status = await session.gitUnstage({ paths });
+      if (opts.json) ok(status);
+      else process.stdout.write(`unstaged ${paths.length} files\n`);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+git
+  .command("discard")
+  .argument("<paths...>", "files to discard")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--yes", "confirm the destructive operation")
+  .option("--json", "machine-readable output")
+  .action(async (paths: string[], opts: { dir: string; yes?: boolean; json?: boolean }) => {
+    try {
+      const session = await sessionFor(opts.dir);
+      const status = await session.gitDiscard({ paths, confirm: opts.yes ?? false });
+      if (opts.json) ok(status);
+      else process.stdout.write(`discarded ${paths.length} files\n`);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+git
+  .command("commit")
+  .requiredOption("-m, --message <text>", "commit message")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--amend", "amend the previous commit")
+  .option("--signoff", "add a sign-off line")
+  .option("--json", "machine-readable output")
+  .action(
+    async (opts: {
+      message: string;
+      dir: string;
+      amend?: boolean;
+      signoff?: boolean;
+      json?: boolean;
+    }) => {
+      try {
+        const session = await sessionFor(opts.dir);
+        const result = await session.gitCommit({
+          message: opts.message,
+          ...(opts.amend ? { amend: true } : {}),
+          ...(opts.signoff ? { signoff: true } : {}),
+        });
+        if (opts.json) ok(result);
+        else process.stdout.write(`${result.hash.slice(0, 8)} ${result.subject}\n`);
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
+
+git
+  .command("log")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--limit <n>", "max commits", "30")
+  .option("--path <path>", "limit to one file")
+  .option("--json", "machine-readable output")
+  .action(async (opts: { dir: string; limit: string; path?: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(opts.dir);
+      const commits = await session.gitLog({
+        limit: Number(opts.limit),
+        ...(opts.path ? { path: opts.path } : {}),
+      });
+      if (opts.json) ok(commits);
+      else {
+        for (const commit of commits) {
+          process.stdout.write(
+            `${commit.shortHash} ${commit.date.slice(0, 10)} ${commit.author} ${commit.subject}\n`,
+          );
+        }
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+git
+  .command("show")
+  .argument("<hash>", "commit hash")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (hash: string, opts: { dir: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(opts.dir);
+      const diff = await session.diff({ range: { mode: "commit", hash } });
+      if (opts.json) ok(diff);
+      else {
+        for (const file of diff.files) {
+          process.stdout.write(`${file.path} (${file.status})\n`);
+          for (const change of file.changes) {
+            process.stdout.write(
+              `  ${change.kind.padEnd(11)} ${change.symbol.name}  ${change.to?.path ?? change.from?.path ?? ""}:${change.to?.startLine ?? change.from?.startLine ?? ""}\n`,
+            );
+          }
+        }
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
 
 program
   .command("notes")
@@ -423,35 +680,16 @@ program
 
 program
   .command("spec")
+  .description("List OpenSpec knowledge files")
   .argument("[dir]", "repository root", ".")
   .option("--json", "machine-readable output")
   .action(async (dir: string, opts: { json?: boolean }) => {
     try {
       const root = await realRoot(path.resolve(dir));
-      const files: string[] = [];
-      for (const candidate of [".specify/memory/constitution.md"]) {
-        try {
-          await fs.access(path.join(root, candidate));
-          files.push(candidate);
-        } catch {
-          // absent
-        }
-      }
-      const specs = await fs.readdir(path.join(root, "specs")).catch(() => []);
-      for (const entry of specs) {
-        for (const name of ["spec.md", "plan.md", "tasks.md"]) {
-          const relative = `specs/${entry}/${name}`;
-          try {
-            await fs.access(path.join(root, relative));
-            files.push(relative);
-          } catch {
-            // absent
-          }
-        }
-      }
+      const files = await listOpenSpecFiles(root);
       if (opts.json) ok({ files });
       else
-        process.stdout.write(files.length ? `${files.join("\n")}\n` : "No spec-kit files found.\n");
+        process.stdout.write(files.length ? `${files.join("\n")}\n` : "No OpenSpec files found.\n");
     } catch (err) {
       fail(err);
     }

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { ReinsContext } from "./context.js";
 
 export interface AsyncState<T> {
   data: T | null;
@@ -12,34 +13,31 @@ export function useAsync<T>(load: () => Promise<T>, deps: unknown[]): AsyncState
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
   const [nonce, setNonce] = useState(0);
-  const alive = useRef(true);
-
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
+  const version = useContext(ReinsContext)?.dataVersion ?? 0;
+  const hasData = useRef(false);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: caller supplies the dependency list
   useEffect(() => {
-    setLoading(true);
+    let cancelled = false;
+    if (!hasData.current) setLoading(true);
     setError(null);
     load()
       .then((value) => {
-        if (alive.current) {
-          setData(value);
-          setLoading(false);
-        }
+        if (cancelled) return;
+        hasData.current = true;
+        setData(value);
+        setLoading(false);
       })
       .catch((err: unknown) => {
-        if (alive.current) {
-          setError(err instanceof Error ? err : new Error(String(err)));
-          setLoading(false);
-        }
+        if (cancelled) return;
+        setError(err instanceof Error ? err : new Error(String(err)));
+        setLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, nonce]);
+  }, [...deps, nonce, version]);
 
   const reload = useCallback(() => setNonce((value) => value + 1), []);
   return { data, error, loading, reload };

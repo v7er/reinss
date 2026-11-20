@@ -19,8 +19,10 @@ export function ReviewWorkspace({ range, height = 640 }: ReviewWorkspaceProps) {
   const notes = useAsync(() => client.call<NoteSummary[]>("listNotes", { limit: 20 }), []);
 
   const firstSymbol =
-    diff.data?.files.flatMap((file) => file.changes).find((change) => change.symbol.id)?.symbol
-      .id ?? null;
+    diff.data?.files
+      .filter((file) => !file.path.startsWith(".trail/"))
+      .flatMap((file) => file.changes)
+      .find((change) => change.symbol.id)?.symbol.id ?? null;
 
   return (
     <div className="reins-review" style={{ minHeight: height }}>

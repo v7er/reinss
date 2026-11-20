@@ -1,4 +1,5 @@
 export type { NavigationTarget, ReinsClient } from "@reins/core";
+export { CodeViewer, type CodeViewerProps } from "./CodeViewer.js";
 export { useReins } from "./context.js";
 export { DiffViewer, type DiffViewerProps } from "./DiffViewer.js";
 export { GraphView, type GraphViewProps } from "./GraphView.js";
@@ -7,5 +8,6 @@ export { ReinsProvider, type ReinsProviderProps } from "./provider.js";
 export { RepoStatus, type RepoStatusProps } from "./RepoStatus.js";
 export { ReviewWorkspace, type ReviewWorkspaceProps } from "./ReviewWorkspace.js";
 export { SurfaceExplorer, type SurfaceExplorerProps } from "./SurfaceExplorer.js";
+export { ThemeToggle, type ThemeToggleProps } from "./ThemeToggle.js";
 export { reinsTheme } from "./theme.js";
 export { useAsync } from "./useAsync.js";

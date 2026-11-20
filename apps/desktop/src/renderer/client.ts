@@ -1,5 +1,6 @@
-import type { ReinsApi, ReinsClient, RepoStatus } from "@reins/core";
+import type { ReinsApi, ReinsClient, ReinsEvent, RepoStatus } from "@reins/core";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 
 export interface ApiEnvelope<T> {
@@ -27,6 +28,18 @@ export async function openRepository(path?: string): Promise<ApiEnvelope<RepoSta
   }
 }
 
+export async function startupRepository(): Promise<string | null> {
+  return invoke<string | null>("startup_repository");
+}
+
+export async function startupTool(): Promise<string | null> {
+  return invoke<string | null>("startup_tool");
+}
+
+export async function startupTheme(): Promise<string | null> {
+  return invoke<string | null>("startup_theme");
+}
+
 export async function closeRepository(): Promise<void> {
   await invoke("close_repository");
 }
@@ -41,9 +54,25 @@ export function createTauriClient(): ReinsClient {
     async call<T>(method: keyof ReinsApi, params?: unknown): Promise<T> {
       const response = await invoke<ApiEnvelope<T>>("reins_invoke", { method, params });
       if (!response.ok) {
-        throw new Error(response.error?.message ?? "Reins request failed.");
+        const error = new Error(response.error?.message ?? "Reins request failed.");
+        (error as Error & { code?: string }).code = response.error?.code;
+        throw error;
       }
       return response.data as T;
+    },
+    subscribe(cb: (event: ReinsEvent) => void): () => void {
+      let disposed = false;
+      let unlisten: (() => void) | null = null;
+      void listen<{ paths?: string[] }>("reins://change", (event) => {
+        cb({ type: "graph-changed", payload: event.payload });
+      }).then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      });
+      return () => {
+        disposed = true;
+        unlisten?.();
+      };
     },
   };
 }

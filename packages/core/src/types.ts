@@ -105,6 +105,32 @@ export interface RepoStatus {
 
 export type SurfaceKind = "http" | "cli" | "page" | "screen" | "export";
 
+export type ComponentKind =
+  | "webapp"
+  | "mobile"
+  | "backoffice"
+  | "core"
+  | "cli"
+  | "service"
+  | "library"
+  | "unknown";
+
+export interface Component {
+  id: string;
+  name: string;
+  kind: ComponentKind;
+  root: string;
+  packageName: string | null;
+  languages: string[];
+  surfaceCount: number;
+  changed: boolean;
+}
+
+export interface SurfaceChange {
+  status: "added" | "deleted" | "modified" | "renamed";
+  touched: boolean;
+}
+
 export interface Surface {
   id: string;
   kind: SurfaceKind;
@@ -120,17 +146,19 @@ export interface Surface {
   evidence: "ast" | "openapi" | "config";
   detector: string;
   detectorVersion: number;
+  componentId: string;
+  change?: SurfaceChange | null;
   metadata: Record<string, string | number | boolean>;
 }
 
 export interface SurfacePage {
   contractVersion: 1;
   items: Surface[];
+  components: Component[];
   total: number;
   offset: number;
   limit: number;
   truncated: boolean;
-  stale: boolean;
 }
 
 export type ChangeKind =
@@ -149,6 +177,21 @@ export interface SourceSpan {
   startLine: number;
   endLine: number;
   name?: string;
+}
+
+export interface DiffLine {
+  kind: "context" | "added" | "removed";
+  oldLine: number | null;
+  newLine: number | null;
+  text: string;
+}
+
+export interface DiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: DiffLine[];
 }
 
 export interface SemanticChange {
@@ -177,20 +220,23 @@ export interface FileDiff {
   degraded: boolean;
   degradedReason?: "parse-error" | "too-large" | "unsupported-language" | "worker-failed";
   changes: SemanticChange[];
+  hunks: DiffHunk[];
   stats: Record<ChangeKind, number>;
 }
 
 export type DiffRange =
   | { mode: "working" }
+  | { mode: "unstaged" }
   | { mode: "staged" }
   | { mode: "range"; base: string; head: string }
-  | { mode: "base"; base?: string };
+  | { mode: "base"; base?: string }
+  | { mode: "commit"; hash: string };
 
 export interface SemanticDiff {
   contractVersion: 1;
   range: DiffRange;
   resolved: {
-    mode: "working" | "staged" | "range" | "base";
+    mode: "working" | "unstaged" | "staged" | "range" | "base" | "commit";
     baseCommit: string | null;
     headCommit: string | null;
     mergeBase: string | null;
@@ -230,7 +276,7 @@ export interface NoteSummary {
   path: string;
   linkCount: number;
   backlinkCount: number;
-  source?: "reins" | "spec-kit";
+  source?: "reins" | "openspec";
 }
 
 export interface KnowledgeNote extends NoteSummary {
@@ -322,6 +368,10 @@ export interface SearchOptions {
   pathPrefix?: string;
 }
 
+export interface SymbolListRequest {
+  limit?: number;
+}
+
 export interface RefreshOptions {
   force?: boolean;
 }
@@ -340,6 +390,10 @@ export interface SurfaceFilter {
   pathPrefix?: string;
   query?: string;
   confidence?: "exact" | "inferred";
+  evidence?: Surface["evidence"];
+  component?: string;
+  changed?: boolean;
+  range?: DiffRange;
   limit?: number;
   offset?: number;
 }
@@ -371,10 +425,63 @@ export interface DiffRequest {
   maxOperationsPerFile?: number;
 }
 
+export interface GitFileStatus {
+  path: string;
+  oldPath: string | null;
+  index: string;
+  worktree: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  conflicted: boolean;
+  additions: number | null;
+  deletions: number | null;
+}
+
+export interface GitStatus {
+  branch: string | null;
+  ahead: number;
+  behind: number;
+  files: GitFileStatus[];
+  clean: boolean;
+}
+
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  author: string;
+  email: string;
+  date: string;
+  subject: string;
+  base: string | null;
+}
+
+export interface GitCommitResult {
+  hash: string;
+  subject: string;
+  status: GitStatus;
+}
+
+export interface BootstrapResult {
+  contractVersion: 1;
+  created: string[];
+  graphBuilt: boolean;
+  surfaces: number;
+  status: RepoStatus;
+}
+
 export interface ReinsApi {
   status(): Promise<RepoStatus>;
+  bootstrap(): Promise<BootstrapResult>;
   refreshGraph(opts?: RefreshOptions): Promise<RepoStatus>;
+  gitStatus(): Promise<GitStatus>;
+  gitStage(req: { paths: string[] }): Promise<GitStatus>;
+  gitUnstage(req: { paths: string[] }): Promise<GitStatus>;
+  gitDiscard(req: { paths: string[]; confirm: boolean }): Promise<GitStatus>;
+  gitCommit(req: { message: string; amend?: boolean; signoff?: boolean }): Promise<GitCommitResult>;
+  gitLog(req?: { limit?: number; path?: string }): Promise<GitCommit[]>;
   searchSymbols(q: string, opts?: SearchOptions): Promise<SymbolHit[]>;
+  listSymbols(req?: SymbolListRequest): Promise<SymbolHit[]>;
   graph(req: GraphRequest): Promise<GraphSlice>;
   listSurfaces(f?: SurfaceFilter): Promise<SurfacePage>;
   flow(req: FlowRequest): Promise<GraphSlice>;
@@ -384,7 +491,7 @@ export interface ReinsApi {
   proposeNote(input: NoteProposal): Promise<NoteProposalResult>;
   check(req?: CheckRequest): Promise<CheckReport>;
   harnessPack(req: PackRequest): Promise<HarnessPack>;
-  readFile(path: string): Promise<{ path: string; text: string }>;
+  readFile(path: string, rev?: "working" | "staged"): Promise<{ path: string; text: string }>;
 }
 
 export interface NavigationTarget {

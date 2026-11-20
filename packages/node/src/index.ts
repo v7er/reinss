@@ -1,9 +1,11 @@
+export { discoverComponents } from "./components.js";
 export { diffFile } from "./diff.js";
 export { GitAdapter } from "./git.js";
-export { loadKnowledge, proposeNote } from "./knowledge.js";
+export { listOpenSpecFiles, loadKnowledge, proposeNote } from "./knowledge.js";
 export { startMcpServer } from "./mcp.js";
 export { readText, realRoot, resolveWithinRoot, writeAtomic } from "./paths.js";
 export { runProcess } from "./process.js";
 export { createSession, RepoSession } from "./session.js";
 export { scanSurfaces } from "./surfaces.js";
 export { TrailAdapter } from "./trail.js";
+export { type RepoWatcher, watchRepo } from "./watch.js";

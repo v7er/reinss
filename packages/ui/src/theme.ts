@@ -5,6 +5,7 @@ export const reinsTheme = createTheme({
     '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif',
   fontFamilyMonospace: 'ui-monospace, "SF Mono", Menlo, Monaco, monospace',
   primaryColor: "blue",
+  primaryShade: { light: 7, dark: 5 },
   defaultRadius: "lg",
   headings: {
     fontFamily:

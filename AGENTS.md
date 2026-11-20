@@ -1,19 +1,20 @@
 # AGENTS.md
 
-This repository holds **Reins**, a local-first desktop app and React component set for code structure, project intent, and semantic review. It is built on Trail for the code graph and reads spec-kit files as knowledge.
+This repository holds **Reins**, a local-first desktop app and React component set for code structure, project intent, and semantic review. It is built on Trail for the code graph and reads OpenSpec files as knowledge.
 
-**Current state: implemented MVP.** The workspace, core, Trail adapter, surface scanners, semantic diff, knowledge ledger, CLI, MCP server, embeddable React components, and Tauri shell exist. Phase 6 hardening (watcher, packaging, Windows/Linux) remains.
+**Current state: implemented MVP.** The workspace, core, Trail adapter, surface scanners, semantic diff, knowledge ledger, CLI, MCP server, embeddable React components, and Tauri shell exist. Phase 6 hardening (packaging, Windows/Linux) remains; the file watcher is in.
 
 ## Read order
 
-1. [README.md](README.md) for the document map and run commands.
-2. [RULES.md](RULES.md) for the package whitelist and performance rules.
-3. [docs/01-product-spec.md](docs/01-product-spec.md) for requirements and acceptance criteria.
-4. [docs/02-architecture.md](docs/02-architecture.md) for boundaries, API, storage, and budgets.
-5. [docs/03-data-contracts.md](docs/03-data-contracts.md) before changing any shape.
-6. [docs/04-roadmap.md](docs/04-roadmap.md) and [docs/05-phase-1-foundation.md](docs/05-phase-1-foundation.md) before proposing work.
-7. [docs/06-ai-harness.md](docs/06-ai-harness.md) for agent tools and skills.
-8. [docs/07-decisions-and-risks.md](docs/07-decisions-and-risks.md) before reopening a settled question.
+1. `openspec/` when present: `config.yaml`, `specs/`, and the active `changes/` folder. This is the project brief, requirements, technical decisions, and task plan.
+2. [README.md](README.md) for the document map and run commands.
+3. [RULES.md](RULES.md) for the package whitelist and performance rules.
+4. [docs/01-product-spec.md](docs/01-product-spec.md) for requirements and acceptance criteria.
+5. [docs/02-architecture.md](docs/02-architecture.md) for boundaries, API, storage, and budgets.
+6. [docs/03-data-contracts.md](docs/03-data-contracts.md) before changing any shape.
+7. [docs/04-roadmap.md](docs/04-roadmap.md) and [docs/05-phase-1-foundation.md](docs/05-phase-1-foundation.md) before proposing work.
+8. [docs/06-ai-harness.md](docs/06-ai-harness.md) for agent tools and skills.
+9. [docs/07-decisions-and-risks.md](docs/07-decisions-and-risks.md) before reopening a settled question.
 
 ## Phase discipline
 
@@ -44,7 +45,7 @@ These are not preferences. Breaking one is a defect.
 2. **One API.** `ReinsApi` in `@reins/core` is the only operation surface. CLI, Tauri, and MCP are thin adapters.
 3. **Pure core.** `@reins/core` imports no `node:*`, Tauri, React, or filesystem module.
 4. **No Node in UI.** `@reins/ui` never imports `@reins/node`, Tauri, or `node:*`.
-5. **Markdown is the knowledge source.** Notes live in `.reins/knowledge/` and are committed. Caches are disposable.
+5. **Markdown is the knowledge source.** Notes live in `.reins/knowledge/` and are committed. OpenSpec under `openspec/` is read-only. Caches are disposable.
 6. **No silent installs or builds.** Reins detects Trail and asks. It never installs it, never builds a graph in the background.
 7. **No network by default.** Indexing, graph, diff, knowledge, and check work offline. LLM features are opt-in and arrive in Phase 6.
 8. **No repository code execution.** Parse and read only. Trail and Git are the only child processes.
@@ -108,9 +109,10 @@ For a code change:
 
 ## Skills
 
-Project skills live in `.agents/skills/`. Two exist now:
+Project skills live in `.agents/skills/`. Three exist now:
 
 - `reins-context`: query the graph before reading code.
 - `reins-decision`: record a decision or constraint as a proposed note.
+- `openspec-init`: initialize OpenSpec as the project knowledge base in a new project.
 
 The remaining skills are specified in [06](docs/06-ai-harness.md#31-catalog) and are written at the start of their phase.

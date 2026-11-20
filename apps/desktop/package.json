@@ -18,6 +18,7 @@
     "@mantine/spotlight": "^9.8.1",
     "@reins/core": "workspace:*",
     "@reins/ui": "workspace:*",
+    "@tabler/icons-react": "^3.52.0",
     "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/plugin-dialog": "^2.4.0",
     "react": "^19.3.1",

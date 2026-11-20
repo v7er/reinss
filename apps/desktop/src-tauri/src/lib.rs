@@ -1,16 +1,20 @@
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
-use tauri::State;
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::Mutex;
+use tokio::process::{Child, ChildStdin, Command};
+use tokio::sync::{oneshot, Mutex};
 use tokio::time::{timeout, Duration};
+
+type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>;
 
 struct Sidecar {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    pending: Pending,
     next_id: u64,
 }
 
@@ -52,7 +56,7 @@ fn serve_script() -> Result<PathBuf, String> {
     ))
 }
 
-async fn spawn_sidecar() -> Result<Sidecar, String> {
+async fn spawn_sidecar(app: Option<AppHandle>) -> Result<Sidecar, String> {
     let node = std::env::var("REINS_NODE_BIN").unwrap_or_else(|_| "node".to_string());
     let script = serve_script()?;
     let mut child = Command::new(node)
@@ -70,55 +74,69 @@ async fn spawn_sidecar() -> Result<Sidecar, String> {
         .stdout
         .take()
         .ok_or_else(|| "Sidecar stdout unavailable".to_string())?;
+    let pending: Pending = Arc::default();
+    let reader_pending = pending.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if let Some(id) = value.get("id").and_then(Value::as_u64) {
+                if let Some(sender) = reader_pending.lock().await.remove(&id) {
+                    let _ = sender.send(value);
+                }
+            } else if value.get("event").is_some() {
+                if let Some(app) = &app {
+                    let payload = value.get("data").cloned().unwrap_or(Value::Null);
+                    let _ = app.emit("reins://change", payload);
+                }
+            }
+        }
+    });
     Ok(Sidecar {
         child,
         stdin,
-        stdout: BufReader::new(stdout),
+        pending,
         next_id: 1,
     })
 }
 
 async fn request(state: &AppState, method: &str, params: Value) -> Result<Value, String> {
-    let mut guard = state.sidecar.lock().await;
-    let sidecar = guard
-        .as_mut()
-        .ok_or_else(|| "REPO_NOT_OPEN: open a repository first".to_string())?;
-    let id = sidecar.next_id;
-    sidecar.next_id += 1;
-    let payload = json!({ "id": id, "method": method, "params": params });
-    sidecar
-        .stdin
-        .write_all(format!("{payload}\n").as_bytes())
-        .await
-        .map_err(|err| format!("Sidecar write failed: {err}"))?;
-    sidecar
-        .stdin
-        .flush()
-        .await
-        .map_err(|err| format!("Sidecar flush failed: {err}"))?;
+    let receiver = {
+        let mut guard = state.sidecar.lock().await;
+        let sidecar = guard
+            .as_mut()
+            .ok_or_else(|| "REPO_NOT_OPEN: open a repository first".to_string())?;
+        let id = sidecar.next_id;
+        sidecar.next_id += 1;
+        let (sender, receiver) = oneshot::channel();
+        sidecar.pending.lock().await.insert(id, sender);
+        let payload = json!({ "id": id, "method": method, "params": params });
+        let written = async {
+            sidecar
+                .stdin
+                .write_all(format!("{payload}\n").as_bytes())
+                .await?;
+            sidecar.stdin.flush().await
+        }
+        .await;
+        if let Err(err) = written {
+            sidecar.pending.lock().await.remove(&id);
+            return Err(format!("Sidecar write failed: {err}"));
+        }
+        receiver
+    };
 
-    loop {
-        let mut line = String::new();
-        let read = timeout(Duration::from_secs(30), sidecar.stdout.read_line(&mut line))
-            .await
-            .map_err(|_| "Sidecar request timed out".to_string())?
-            .map_err(|err| format!("Sidecar read failed: {err}"))?;
-        if read == 0 {
-            return Err("Sidecar exited".to_string());
-        }
-        let value: Value = match serde_json::from_str(line.trim()) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        if value.get("id").and_then(Value::as_u64) != Some(id) {
-            continue;
-        }
-        if value.get("ok").and_then(Value::as_bool) == Some(true) {
-            return Ok(value.get("data").cloned().unwrap_or(Value::Null));
-        }
-        let error = value.get("error").cloned().unwrap_or(Value::Null);
-        return Err(error.to_string());
+    let value = timeout(Duration::from_secs(30), receiver)
+        .await
+        .map_err(|_| "Sidecar request timed out".to_string())?
+        .map_err(|_| "Sidecar exited".to_string())?;
+    if value.get("ok").and_then(Value::as_bool) == Some(true) {
+        return Ok(value.get("data").cloned().unwrap_or(Value::Null));
     }
+    let error = value.get("error").cloned().unwrap_or(Value::Null);
+    Err(error.to_string())
 }
 
 fn envelope(data: Value) -> Value {
@@ -134,14 +152,39 @@ fn failure(message: String) -> Value {
 }
 
 #[tauri::command]
-async fn open_repository(state: State<'_, AppState>, path: String) -> Result<Value, String> {
+fn startup_repository() -> Option<String> {
+    std::env::var("REINS_OPEN_REPO")
+        .ok()
+        .filter(|path| !path.trim().is_empty())
+}
+
+#[tauri::command]
+fn startup_tool() -> Option<String> {
+    std::env::var("REINS_OPEN_TOOL")
+        .ok()
+        .filter(|tool| !tool.trim().is_empty())
+}
+
+#[tauri::command]
+fn startup_theme() -> Option<String> {
+    std::env::var("REINS_THEME")
+        .ok()
+        .filter(|theme| theme == "light" || theme == "dark")
+}
+
+#[tauri::command]
+async fn open_repository(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Value, String> {
     {
         let mut guard = state.sidecar.lock().await;
         if let Some(mut old) = guard.take() {
             let _ = old.child.kill().await;
         }
     }
-    let sidecar = spawn_sidecar().await?;
+    let sidecar = spawn_sidecar(Some(app)).await?;
     *state.sidecar.lock().await = Some(sidecar);
     match request(state.inner(), "open", json!({ "root": path })).await {
         Ok(data) => Ok(envelope(data)),
@@ -196,6 +239,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
+            startup_repository,
+            startup_tool,
+            startup_theme,
             open_repository,
             reins_invoke,
             close_repository,
@@ -225,7 +271,7 @@ mod tests {
             .canonicalize()
             .expect("fixture repository");
         let state = AppState::default();
-        *state.sidecar.lock().await = Some(spawn_sidecar().await.expect("sidecar"));
+        *state.sidecar.lock().await = Some(spawn_sidecar(None).await.expect("sidecar"));
         let data = request(&state, "open", json!({ "root": fixture }))
             .await
             .expect("open response");

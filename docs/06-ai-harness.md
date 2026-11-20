@@ -15,6 +15,8 @@ An agent with only file tools spends most of its context discovering structure. 
 
 The second failure is intent. An agent that can see every function but not the constraint "refunds write to the ledger first" produces a change that compiles and is wrong. The knowledge layer exists to make that constraint available in one call and to fail a check when it is violated.
 
+OpenSpec under `openspec/` is the first read for project intent. Reins imports its config, specs, proposals, designs, and tasks as read-only notes, so the brief and the decisions are available before the code.
+
 The harness is judged on two numbers: tokens spent to reach a correct change, and incorrect changes caused by missing intent. Everything else is secondary.
 
 ## 2. AGENTS.md
@@ -60,8 +62,9 @@ A skill file has YAML frontmatter with `name` and `description`, then:
 | `reins-decision` | 1 | A choice is made that future work must follow, or a constraint is discovered. | A decision or constraint note in the inbox, plus a review request. |
 | `reins-surface` | 2 | Adding support for a framework's entry points. | One detector, one fixture repository, golden surfaces, registry entry. |
 | `reins-diff-review` | 3 | Reviewing a structural change or an agent's edit. | Operation summary, risks, and comments linked to operations. |
+| `openspec-init` | any | A new project needs an OpenSpec knowledge base. | `openspec/` with config, first spec, and first change. |
 
-Two exist now: `reins-context` (runs against Trail until `reins` exists) and `reins-decision`. The other two are written at the start of their phase, not before.
+Three exist now: `reins-context` (runs against Trail until `reins` exists), `reins-decision`, and `openspec-init`. The other two are written at the start of their phase, not before.
 
 ### 3.2 `reins-context`
 

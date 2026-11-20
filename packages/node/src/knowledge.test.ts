@@ -11,33 +11,48 @@ async function tempRepo(): Promise<string> {
 }
 
 describe("loadKnowledge", () => {
-  it("loads Reins notes and spec-kit files", async () => {
+  it("loads Reins notes and OpenSpec files", async () => {
     const root = await tempRepo();
     await fs.mkdir(path.join(root, ".reins/knowledge/decisions"), { recursive: true });
-    await fs.mkdir(path.join(root, ".specify/memory"), { recursive: true });
-    await fs.mkdir(path.join(root, "specs/001-refunds"), { recursive: true });
+    await fs.mkdir(path.join(root, "openspec/specs/refunds"), { recursive: true });
+    await fs.mkdir(path.join(root, "openspec/changes/add-refunds"), { recursive: true });
     await fs.writeFile(
       path.join(root, ".reins/knowledge/decisions/ledger-first.md"),
       `---\ntitle: Ledger first\ntype: decision\nstatus: accepted\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n\nRefunds write to the ledger first.\n`,
     );
     await fs.writeFile(
-      path.join(root, ".specify/memory/constitution.md"),
-      "# Constitution\n\nBe idempotent.\n",
+      path.join(root, "openspec/config.yaml"),
+      "schema: spec-driven\ncontext: |\n  Refunds write to the ledger first.\n",
     );
     await fs.writeFile(
-      path.join(root, "specs/001-refunds/spec.md"),
+      path.join(root, "openspec/specs/refunds/spec.md"),
       "# Refund spec\n\nLedger first.\n",
+    );
+    await fs.writeFile(
+      path.join(root, "openspec/changes/add-refunds/proposal.md"),
+      "# Add refunds\n\nWhy refunds.\n",
+    );
+    await fs.writeFile(
+      path.join(root, "openspec/changes/add-refunds/design.md"),
+      "# Refund design\n\nLedger first.\n",
     );
 
     const loaded = await loadKnowledge(root, ".reins/knowledge");
     expect(loaded.notes.map((note) => note.id).sort()).toEqual([
       "ledger-first",
-      "spec-kit-001-refunds-spec",
-      "spec-kit-constitution",
+      "openspec-change-add-refunds-design",
+      "openspec-change-add-refunds-proposal",
+      "openspec-config",
+      "openspec-spec-refunds",
     ]);
-    expect(loaded.notes.find((note) => note.id === "spec-kit-constitution")?.source).toBe(
-      "spec-kit",
+    expect(loaded.notes.find((note) => note.id === "openspec-config")?.source).toBe("openspec");
+    expect(loaded.notes.find((note) => note.id === "openspec-config")?.type).toBe("constraint");
+    expect(loaded.notes.find((note) => note.id === "openspec-config")?.title).toBe(
+      "OpenSpec project config",
     );
+    expect(
+      loaded.notes.find((note) => note.id === "openspec-change-add-refunds-design")?.type,
+    ).toBe("decision");
   });
 
   it("reports invalid frontmatter", async () => {

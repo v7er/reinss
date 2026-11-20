@@ -1,7 +1,9 @@
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { parse } from "@babel/parser";
 import {
+  assignComponent,
+  type Component,
   nextRouteFromFile,
   normalizeRoute,
   type Surface,
@@ -119,7 +121,9 @@ function makeSurface(input: {
   line: number;
   symbolName: string | null;
   detector: string;
+  componentId: string;
   confidence?: "exact" | "inferred";
+  evidence?: "ast" | "openapi" | "config";
   metadata?: Record<string, string | number | boolean>;
 }): Surface {
   const symbolId = input.symbolName ? `${input.file}#${input.symbolName}` : input.file;
@@ -143,12 +147,13 @@ function makeSurface(input: {
     file: input.file,
     line: input.line,
     confidence: input.confidence ?? (symbolId ? "exact" : "inferred"),
-    evidence: "ast",
+    evidence: input.evidence ?? "ast",
     detector: input.detector,
     detectorVersion: 1,
+    componentId: input.componentId,
     metadata: {
       ...(input.metadata ?? {}),
-      ...(input.symbolName ? {} : { linkReason: "file-node" }),
+      ...(input.symbolName || input.metadata?.linkReason ? {} : { linkReason: "file-node" }),
     },
   };
 }
@@ -175,6 +180,7 @@ function detectHttpFrameworks(
   file: string,
   ast: AstNode,
   framework: "express" | "hono",
+  componentId: string,
 ): Surface[] {
   const surfaces: Surface[] = [];
   walk(ast, [], (node, stack) => {
@@ -207,6 +213,7 @@ function detectHttpFrameworks(
                   : 1,
               symbolName: handler,
               detector: framework,
+              componentId,
             }),
           );
         }
@@ -216,7 +223,7 @@ function detectHttpFrameworks(
   return surfaces;
 }
 
-function detectCommander(file: string, ast: AstNode): Surface[] {
+function detectCommander(file: string, ast: AstNode, componentId: string): Surface[] {
   const surfaces: Surface[] = [];
   walk(ast, [], (node, stack) => {
     if (node.type === "CallExpression") {
@@ -239,6 +246,7 @@ function detectCommander(file: string, ast: AstNode): Surface[] {
                   : 1,
               symbolName: enclosingName(stack),
               detector: "commander",
+              componentId,
             }),
           );
         }
@@ -248,7 +256,7 @@ function detectCommander(file: string, ast: AstNode): Surface[] {
   return surfaces;
 }
 
-function detectNext(file: string, ast: AstNode): Surface[] {
+function detectNext(file: string, ast: AstNode, componentId: string): Surface[] {
   const route = nextRouteFromFile(file);
   if (!route) return [];
   const surfaces: Surface[] = [];
@@ -275,6 +283,7 @@ function detectNext(file: string, ast: AstNode): Surface[] {
               : 1,
           symbolName: name,
           detector: "next-app",
+          componentId,
         }),
       );
     }
@@ -301,6 +310,7 @@ function detectNext(file: string, ast: AstNode): Surface[] {
                 : 1,
             symbolName: name,
             detector: "next-app",
+            componentId,
           }),
         );
       }
@@ -309,7 +319,7 @@ function detectNext(file: string, ast: AstNode): Surface[] {
   return surfaces;
 }
 
-function detectReactRouter(file: string, ast: AstNode): Surface[] {
+function detectReactRouter(file: string, ast: AstNode, componentId: string): Surface[] {
   const surfaces: Surface[] = [];
   walk(ast, [], (node) => {
     if (node.type === "CallExpression" && calleeName(node.callee) === "createBrowserRouter") {
@@ -336,6 +346,7 @@ function detectReactRouter(file: string, ast: AstNode): Surface[] {
                     : 1,
                 symbolName: null,
                 detector: "react-router",
+                componentId,
               }),
             );
           }
@@ -365,6 +376,7 @@ function detectReactRouter(file: string, ast: AstNode): Surface[] {
                   : 1,
               symbolName: null,
               detector: "react-router",
+              componentId,
             }),
           );
         }
@@ -374,7 +386,7 @@ function detectReactRouter(file: string, ast: AstNode): Surface[] {
   return surfaces;
 }
 
-function detectFastApi(file: string, source: string): Surface[] {
+function detectFastApi(file: string, source: string, componentId: string): Surface[] {
   const surfaces: Surface[] = [];
   const lines = source.split("\n");
   const pattern =
@@ -400,8 +412,151 @@ function detectFastApi(file: string, source: string): Surface[] {
         line: i + 1,
         symbolName: name,
         detector: "fastapi",
+        componentId,
       }),
     );
+  }
+  return surfaces;
+}
+
+// shortcut: JSON specs only, add a YAML parser when a repository needs it.
+const specGlobs = ["**/openapi.json", "**/swagger.json"];
+
+// x-source-file is relative to the command root that generated the spec, which is the
+// spec's folder or an ancestor of it. A leading slash means repository root.
+function resolveSpecSource(
+  root: string,
+  specFile: string,
+  value: unknown,
+  cache: Map<string, string | null>,
+): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const raw = value.trim().replace(/\\/g, "/");
+  const key = `${specFile}\0${raw}`;
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+
+  const finish = (result: string | null) => {
+    cache.set(key, result);
+    return result;
+  };
+
+  if (raw.startsWith("/")) {
+    const rooted = path.posix.normalize(raw.slice(1));
+    return finish(rooted.startsWith("..") ? null : rooted);
+  }
+
+  let dir = path.posix.dirname(specFile);
+  for (;;) {
+    const candidate = path.posix.normalize(path.posix.join(dir, raw));
+    if (!candidate.startsWith("..") && existsInRoot(root, candidate)) return finish(candidate);
+    if (dir === "." || dir === "/") break;
+    dir = path.posix.dirname(dir);
+  }
+  const fallback = path.posix.normalize(path.posix.join(path.posix.dirname(specFile), raw));
+  return finish(fallback.startsWith("..") ? null : fallback);
+}
+
+function existsInRoot(root: string, relative: string): boolean {
+  try {
+    return existsSync(resolveWithinRoot(root, relative));
+  } catch {
+    return false;
+  }
+}
+
+async function detectOpenApi(
+  root: string,
+  components: Component[],
+  diagnostics: ScanDiagnostic[],
+): Promise<Surface[]> {
+  const files = await fg(specGlobs, {
+    cwd: root,
+    ignore: defaultIgnore,
+    onlyFiles: true,
+    dot: false,
+    followSymbolicLinks: false,
+  });
+  const surfaces: Surface[] = [];
+  const sourceCache = new Map<string, string | null>();
+  for (const file of files.sort()) {
+    let doc: { openapi?: string; swagger?: string; paths?: Record<string, unknown> };
+    try {
+      const text = await fs.readFile(resolveWithinRoot(root, file), "utf8");
+      if (text.length > 5_000_000) {
+        diagnostics.push({
+          detector: "openapi",
+          file,
+          severity: "warning",
+          message: "OpenAPI document is larger than 5 MB and was skipped.",
+        });
+        continue;
+      }
+      doc = JSON.parse(text) as typeof doc;
+    } catch {
+      diagnostics.push({
+        detector: "openapi",
+        file,
+        severity: "warning",
+        message: "Could not parse the OpenAPI JSON document.",
+      });
+      continue;
+    }
+    if (!doc.paths || (!doc.openapi && !doc.swagger)) {
+      diagnostics.push({
+        detector: "openapi",
+        file,
+        severity: "warning",
+        message: "File is not an OpenAPI 3 or Swagger 2 document.",
+      });
+      continue;
+    }
+    for (const [route, item] of Object.entries(doc.paths)) {
+      if (!item || typeof item !== "object") continue;
+      const pathItem = item as Record<string, unknown>;
+      for (const method of httpMethods) {
+        const operation = pathItem[method];
+        if (!operation || typeof operation !== "object") continue;
+        const op = operation as {
+          operationId?: string;
+          summary?: string;
+          tags?: string[];
+          "x-source-file"?: string;
+        };
+        const rawSource =
+          op["x-source-file"] ??
+          pathItem["x-source-file"] ??
+          (doc as Record<string, unknown>)["x-source-file"];
+        const sourceFile = resolveSpecSource(root, file, rawSource, sourceCache);
+        surfaces.push(
+          makeSurface({
+            kind: "http",
+            framework: "openapi",
+            route: normalizeRoute(route),
+            method: method.toUpperCase(),
+            file: sourceFile ?? file,
+            // shortcut: spec surfaces point at line 1, find the path key when navigation needs it.
+            line: 1,
+            symbolName: op.operationId ?? null,
+            detector: "openapi",
+            componentId: sourceFile
+              ? assignComponent(sourceFile, components)
+              : assignComponent(file, components),
+            confidence: "inferred",
+            evidence: "openapi",
+            metadata: {
+              spec: file,
+              ...(sourceFile ? { sourceFile } : { linkReason: "missing-x-source-file" }),
+              ...(typeof rawSource === "string" && rawSource.trim()
+                ? { xSourceFile: rawSource.trim() }
+                : {}),
+              ...(op.summary ? { summary: op.summary } : {}),
+              ...(op.tags?.length ? { tags: op.tags.join(",") } : {}),
+            },
+          }),
+        );
+      }
+    }
   }
   return surfaces;
 }
@@ -417,14 +572,29 @@ const defaultIgnore = [
   "**/.cache/**",
   "**/.git/**",
   "**/vendor/**",
+  "legacy/**",
 ];
 
 export async function scanSurfaces(
   root: string,
-  options: { detectors?: string[]; ignore?: string[]; maxFiles?: number } = {},
+  options: {
+    detectors?: string[];
+    ignore?: string[];
+    maxFiles?: number;
+    components?: Component[];
+  } = {},
 ): Promise<ScanResult> {
+  const components = options.components ?? [];
   const enabled = new Set(
-    options.detectors ?? ["express", "hono", "commander", "next-app", "react-router", "fastapi"],
+    options.detectors ?? [
+      "express",
+      "hono",
+      "commander",
+      "next-app",
+      "react-router",
+      "fastapi",
+      "openapi",
+    ],
   );
   const surfaces: Surface[] = [];
   const diagnostics: ScanDiagnostic[] = [];
@@ -463,9 +633,11 @@ export async function scanSurfaces(
     const hasCommander = /\.command\s*\(/.test(source);
     const hasRouter = /createBrowserRouter|<Route\b/.test(source);
 
+    const componentId = assignComponent(file, components);
+
     if (isPython) {
       if (enabled.has("fastapi") && /@(app|router)\.(get|post|put|patch|delete)/.test(source)) {
-        surfaces.push(...detectFastApi(file, source));
+        surfaces.push(...detectFastApi(file, source, componentId));
       }
       continue;
     }
@@ -484,15 +656,19 @@ export async function scanSurfaces(
     }
 
     try {
-      if (isNext && enabled.has("next-app")) surfaces.push(...detectNext(file, ast));
+      if (isNext && enabled.has("next-app")) surfaces.push(...detectNext(file, ast, componentId));
       if (hasExpress && enabled.has("express") && (isExpress || !isHono)) {
-        surfaces.push(...detectHttpFrameworks(file, ast, "express"));
+        surfaces.push(...detectHttpFrameworks(file, ast, "express", componentId));
       }
       if (hasExpress && enabled.has("hono") && isHono) {
-        surfaces.push(...detectHttpFrameworks(file, ast, "hono"));
+        surfaces.push(...detectHttpFrameworks(file, ast, "hono", componentId));
       }
-      if (hasCommander && enabled.has("commander")) surfaces.push(...detectCommander(file, ast));
-      if (hasRouter && enabled.has("react-router")) surfaces.push(...detectReactRouter(file, ast));
+      if (hasCommander && enabled.has("commander")) {
+        surfaces.push(...detectCommander(file, ast, componentId));
+      }
+      if (hasRouter && enabled.has("react-router")) {
+        surfaces.push(...detectReactRouter(file, ast, componentId));
+      }
     } catch (err) {
       diagnostics.push({
         detector: "detector",
@@ -503,13 +679,28 @@ export async function scanSurfaces(
     }
   }
 
+  if (enabled.has("openapi")) {
+    surfaces.push(...(await detectOpenApi(root, components, diagnostics)));
+  }
+
+  const codeRoutes = new Set(
+    surfaces
+      .filter((surface) => surface.evidence === "ast")
+      .map((surface) => `${surface.method ?? ""}:${surface.route ?? ""}`),
+  );
   const seen = new Set<string>();
-  const unique = sortSurfaces(surfaces).filter((surface) => {
-    const key = `${surface.id}|${surface.file}|${surface.line}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const unique = sortSurfaces(surfaces)
+    .filter(
+      (surface) =>
+        surface.evidence !== "openapi" ||
+        !codeRoutes.has(`${surface.method ?? ""}:${surface.route ?? ""}`),
+    )
+    .filter((surface) => {
+      const key = `${surface.id}|${surface.file}|${surface.line}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
   return { surfaces: unique, diagnostics };
 }
