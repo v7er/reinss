@@ -31,7 +31,7 @@ import type {
   CheckReport,
   DiffRange,
   FileDiff,
-  GitCommit,
+  GitGraphCommit,
   GitStatus,
   GraphNode,
   GraphSlice,
@@ -40,19 +40,23 @@ import type {
   SemanticDiff,
   SurfacePage,
   SymbolHit,
-} from "@reins/core";
+} from "@reinss/core";
 import {
   CodeViewer,
   DiffViewer,
+  GitRefs,
+  GitTreeViewer,
   GraphView,
   KnowledgeBoard,
+  LANE_COLORS,
+  layoutGitTree,
   ReinsProvider,
   ReviewWorkspace,
   SurfaceExplorer,
   ThemeToggle,
   useAsync,
   useReins,
-} from "@reins/ui";
+} from "@reinss/ui";
 import {
   IconAlertTriangle,
   IconArrowLeft,
@@ -81,9 +85,10 @@ import {
   startupTheme,
   startupTool,
 } from "./client.js";
+import { tailPath } from "./path.js";
 
-type ToolId = "status" | "git" | "surfaces" | "knowledge";
-type GitTab = "changes" | "diff" | "review" | "history";
+type ToolId = "status" | "git" | "surfaces" | "knowledge" | "review";
+type GitTab = "changes" | "history" | "refs";
 type SurfaceTab = "entry" | "flow" | "graph";
 type KnowledgeTab = "notes" | "check";
 type SyncState = "idle" | "syncing" | "synced" | "error";
@@ -135,7 +140,11 @@ function ToolIcon({ id, size = 16 }: { id: ToolId; size?: number }) {
 
 const TOOLS: Array<{ id: ToolId; label: string; description: string }> = [
   { id: "status", label: "Home", description: "Quick actions" },
-  { id: "git", label: "Git", description: "Changes, semantic diff, and review" },
+  {
+    id: "git",
+    label: "Git",
+    description: "Changes, history, branches, tags, and worktrees",
+  },
   { id: "surfaces", label: "Surfaces", description: "Entry points, flow, and call graph" },
   { id: "knowledge", label: "Knowledge", description: "Notes, constraints, and check" },
 ];
@@ -283,6 +292,7 @@ function FlowTool({ target, onTarget }: { target: string; onTarget: (value: stri
   const { client } = useReins();
   const [input, setInput] = useState(target);
   const [changedOnly, setChangedOnly] = useState(false);
+  const [view, setView] = useState<"file" | "graph">("file");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [modalPath, setModalPath] = useState<string | null>(null);
   useEffect(() => setInput(target), [target]);
@@ -347,13 +357,10 @@ function FlowTool({ target, onTarget }: { target: string; onTarget: (value: stri
     [diff.data],
   );
   const flowChanged = paths.filter((path) => changedFiles.has(path));
-  const firstPath = nodes[0]?.path;
-  const expandableNodes = nodes.filter((node) => node.path !== firstPath);
-  const allExpanded =
-    expandableNodes.length > 0 && expandableNodes.every((node) => expanded.has(node.id));
+  const allExpanded = nodes.length > 0 && nodes.every((node) => expanded.has(node.id));
 
   const toggleAll = () => {
-    setExpanded(allExpanded ? new Set() : new Set(expandableNodes.map((node) => node.id)));
+    setExpanded(allExpanded ? new Set() : new Set(nodes.map((node) => node.id)));
   };
 
   const toggleNode = (id: string) => {
@@ -386,7 +393,19 @@ function FlowTool({ target, onTarget }: { target: string; onTarget: (value: stri
           onChange={(event) => setChangedOnly(event.currentTarget.checked)}
           label="Changed only"
         />
-        <Switch size="sm" checked={allExpanded} onChange={toggleAll} label="Expand all code" />
+        {view === "file" ? (
+          <Switch size="sm" checked={allExpanded} onChange={toggleAll} label="Expand all code" />
+        ) : null}
+        <SegmentedControl
+          size="xs"
+          radius="xl"
+          value={view}
+          onChange={(value) => setView(value as "file" | "graph")}
+          data={[
+            { label: "File", value: "file" },
+            { label: "Graph", value: "graph" },
+          ]}
+        />
       </Group>
       {state.loading ? (
         <Group gap="sm">
@@ -465,7 +484,10 @@ function FlowTool({ target, onTarget }: { target: string; onTarget: (value: stri
           </ScrollArea>
         </Paper>
       ) : null}
-      {state.data ? (
+      {view === "graph" && state.data ? (
+        <GraphView data={state.data} showModeSwitch={false} height={560} />
+      ) : null}
+      {view === "file" && state.data ? (
         <Paper withBorder radius="lg" p={4}>
           <Stack gap={0}>
             {nodes.map((node) => {
@@ -482,19 +504,17 @@ function FlowTool({ target, onTarget }: { target: string; onTarget: (value: stri
                   <div className="reins-flow-row">
                     <UnstyledButton
                       className="reins-row"
-                      onClick={node.path === firstPath ? undefined : () => toggleNode(node.id)}
+                      onClick={() => toggleNode(node.id)}
                       aria-expanded={isOpen}
                     >
                       <span className="reins-row-main" style={{ paddingLeft: node.depth * 16 }}>
-                        {node.path === firstPath ? null : (
-                          <IconChevronRight
-                            size={14}
-                            style={{
-                              transform: isOpen ? "rotate(90deg)" : undefined,
-                              transition: "transform 120ms ease",
-                            }}
-                          />
-                        )}
+                        <IconChevronRight
+                          size={14}
+                          style={{
+                            transform: isOpen ? "rotate(90deg)" : undefined,
+                            transition: "transform 120ms ease",
+                          }}
+                        />
                         {node.name}
                         {change ? (
                           <Badge size="xs" ml={8} variant="light" color="yellow">
@@ -730,9 +750,37 @@ function GitChanges({ onChanged }: { onChanged: () => void }) {
 
 function GitHistory({ onOpen }: { onOpen: (hash: string) => void }) {
   const { client } = useReins();
-  const state = useAsync(() => client.call<GitCommit[]>("gitLog", { limit: 50 }), []);
+  const state = useAsync(() => client.call<GitGraphCommit[]>("gitGraph", { limit: 300 }), []);
+  const [selected, setSelected] = useState<string | null>(null);
+  const selectedCommit = state.data?.find((commit) => commit.hash === selected) ?? null;
+  const rootRef = useRef<HTMLDivElement>(null);
+  const treeRef = useRef<HTMLDivElement>(null);
+  const [rootHeight, setRootHeight] = useState(0);
+  const [treeHeight, setTreeHeight] = useState(480);
+
+  useEffect(() => {
+    const update = () => {
+      const top = rootRef.current?.getBoundingClientRect().top ?? 0;
+      setRootHeight(Math.max(320, window.innerHeight - top - 140));
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  useEffect(() => {
+    const element = treeRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const height = entry?.contentRect.height ?? 0;
+      if (height > 0) setTreeHeight(height);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <Stack gap="sm">
+    <Stack gap="sm" ref={rootRef} style={{ height: rootHeight || undefined }}>
       {state.loading ? (
         <Group gap="sm">
           <Loader size="sm" />
@@ -746,113 +794,360 @@ function GitHistory({ onOpen }: { onOpen: (hash: string) => void }) {
           {state.error.message}
         </Alert>
       ) : null}
-      <Paper withBorder radius="lg" p={4}>
-        <ScrollArea h={480} type="auto">
-          <Stack gap={0}>
-            {(state.data ?? []).map((commit) => (
-              <UnstyledButton
-                key={commit.hash}
-                className="reins-row"
-                onClick={() => onOpen(commit.hash)}
-              >
-                <span className="reins-row-main">
-                  <Text span ff="monospace" size="xs" c="dimmed" mr={8}>
-                    {commit.shortHash}
-                  </Text>
-                  {commit.subject}
-                </span>
-                <span className="reins-row-meta">
-                  {commit.author} · {commit.date.slice(0, 10)}
-                </span>
-              </UnstyledButton>
-            ))}
-            {!state.loading && (state.data ?? []).length === 0 ? (
-              <Text size="sm" c="dimmed" p="md">
-                No commits yet.
+      <Group justify="space-between">
+        <Text size="xs" c="dimmed">
+          {state.data?.length ?? 0} commits
+        </Text>
+        <Text size="xs" c="dimmed">
+          {state.data?.filter((commit) => commit.parents.length > 1).length ?? 0} merges
+        </Text>
+      </Group>
+      <div ref={treeRef} style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+        <GitTreeViewer
+          commits={state.data ?? []}
+          height={treeHeight}
+          selected={selected}
+          onSelect={(commit) => setSelected(commit.hash)}
+          onOpen={(commit) => onOpen(commit.hash)}
+        />
+      </div>
+      {selectedCommit ? (
+        <Paper withBorder radius="lg" p="md">
+          <Group justify="space-between" align="flex-start" wrap="nowrap">
+            <Stack gap={2} style={{ minWidth: 0 }}>
+              <Text size="sm" fw={600} truncate>
+                {selectedCommit.subject}
               </Text>
-            ) : null}
-          </Stack>
-        </ScrollArea>
-      </Paper>
+              <Text size="xs" c="dimmed">
+                {selectedCommit.shortHash} · {selectedCommit.author} ·{" "}
+                {selectedCommit.date.slice(0, 10)}
+                {selectedCommit.parents.length > 1
+                  ? ` · merge of ${selectedCommit.parents.length}`
+                  : ""}
+              </Text>
+              {selectedCommit.refs.length > 0 ? (
+                <Group gap={4}>
+                  {selectedCommit.refs.map((ref) => (
+                    <Badge key={ref} size="xs" variant="light" color="gray">
+                      {ref}
+                    </Badge>
+                  ))}
+                </Group>
+              ) : null}
+            </Stack>
+            <Button size="compact-sm" onClick={() => onOpen(selectedCommit.hash)}>
+              Review diff
+            </Button>
+          </Group>
+        </Paper>
+      ) : (
+        <Text size="xs" c="dimmed">
+          Select a commit to inspect it. Double-click or press Enter to review its diff.
+        </Text>
+      )}
     </Stack>
   );
 }
 
 function GitTool({
-  range,
-  onRange,
   tab,
   onTab,
-  onChanged,
+  onReview,
 }: {
-  range: DiffRange;
-  onRange: (range: DiffRange) => void;
   tab: GitTab;
   onTab: (tab: GitTab) => void;
-  onChanged: () => void;
+  onReview: (hash: string) => void;
 }) {
+  const { client } = useReins();
+  const status = useAsync(() => client.call<GitStatus>("gitStatus"), []);
+  const refresh = () => status.reload();
+
   return (
     <Stack gap="md">
-      <Group justify="space-between">
-        {range.mode === "commit" ? (
-          <Group gap="xs">
-            <Badge variant="light" color="blue" radius="xl">
-              commit {range.hash.slice(0, 8)}
-            </Badge>
-            <Button size="compact-sm" variant="subtle" onClick={() => onRange({ mode: "working" })}>
-              Working tree
-            </Button>
-          </Group>
-        ) : (
-          <SegmentedControl
-            value={range.mode}
-            onChange={(value) =>
-              onRange(
-                value === "staged"
-                  ? { mode: "staged" }
-                  : value === "base"
-                    ? { mode: "base" }
-                    : { mode: "working" },
-              )
-            }
-            data={[
-              { label: "Working", value: "working" },
-              { label: "Staged", value: "staged" },
-              { label: "Base", value: "base" },
-            ]}
-            radius="xl"
-          />
-        )}
+      <Group justify="flex-end" gap="xs">
         <Badge variant="light" color="gray" radius="xl">
-          {range.mode}
+          {status.data?.branch ?? "detached"}
         </Badge>
+        {status.data?.ahead ? (
+          <Badge size="xs" variant="light" color="green">
+            ahead {status.data.ahead}
+          </Badge>
+        ) : null}
+        {status.data?.behind ? (
+          <Badge size="xs" variant="light" color="orange">
+            behind {status.data.behind}
+          </Badge>
+        ) : null}
       </Group>
       <Tabs value={tab} onChange={(value) => value && onTab(value as GitTab)}>
         <Tabs.List>
           <Tabs.Tab value="changes">Changes</Tabs.Tab>
-          <Tabs.Tab value="diff">Diff</Tabs.Tab>
-          <Tabs.Tab value="review">Review</Tabs.Tab>
           <Tabs.Tab value="history">History</Tabs.Tab>
+          <Tabs.Tab value="refs">Branches, tags, worktrees</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="changes" pt="md">
-          <GitChanges onChanged={onChanged} />
-        </Tabs.Panel>
-        <Tabs.Panel value="diff" pt="md">
-          <DiffViewer range={range} height={560} />
-        </Tabs.Panel>
-        <Tabs.Panel value="review" pt="md">
-          <ReviewWorkspace range={range} height={560} />
+          <GitChanges onChanged={refresh} />
         </Tabs.Panel>
         <Tabs.Panel value="history" pt="md">
-          <GitHistory
-            onOpen={(hash) => {
-              onRange({ mode: "commit", hash });
-              onTab("diff");
-            }}
-          />
+          <GitHistory onOpen={onReview} />
+        </Tabs.Panel>
+        <Tabs.Panel value="refs" pt="md">
+          <GitRefs onChanged={refresh} />
         </Tabs.Panel>
       </Tabs>
     </Stack>
+  );
+}
+
+const TIMELINE_COL = 150;
+const TIMELINE_LANE = 14;
+const TIMELINE_DOT = 8;
+
+function CommitTimeline({
+  commits,
+  current,
+  onOpen,
+}: {
+  commits: GitGraphCommit[];
+  current: string;
+  onOpen: (hash: string) => void;
+}) {
+  const layout = layoutGitTree(commits);
+  const count = layout.rows.length;
+  const width = count * TIMELINE_COL;
+  const height = Math.max(1, layout.laneCount) * TIMELINE_LANE + 4;
+  const x = (row: number) => (count - 1 - row) * TIMELINE_COL + TIMELINE_DOT;
+  const y = (lane: number) => lane * TIMELINE_LANE + TIMELINE_LANE / 2 + 2;
+
+  const related = useMemo(() => {
+    const set = new Set<number>();
+    const currentRow = layout.rows.findIndex((row) => row.commit.hash === current);
+    if (currentRow < 0) return set;
+    const queue = [currentRow];
+    while (queue.length > 0) {
+      const row = queue.pop();
+      if (row === undefined || set.has(row)) continue;
+      set.add(row);
+      const commit = layout.rows[row]?.commit;
+      if (!commit) continue;
+      for (const parent of commit.parents) {
+        const index = layout.rows.findIndex((item) => item.commit.hash === parent);
+        if (index >= 0) queue.push(index);
+      }
+      for (const edge of layout.edges) {
+        if (edge.toRow === row) queue.push(edge.fromRow);
+      }
+    }
+    return set;
+  }, [layout, current]);
+
+  return (
+    <div className="reins-timeline" style={{ width }}>
+      <svg
+        width={width}
+        height={height}
+        className="reins-timeline-graph"
+        role="img"
+        aria-label="Commit graph"
+      >
+        <title>Commit graph</title>
+        {layout.edges.map((edge) => {
+          const color = LANE_COLORS[edge.fromLane % LANE_COLORS.length];
+          const key = `${edge.fromRow}-${edge.toRow}-${edge.fromLane}-${edge.toLane}`;
+          if (edge.toRow >= count) {
+            return (
+              <line
+                key={key}
+                x1={x(edge.fromRow)}
+                y1={y(edge.fromLane)}
+                x2={0}
+                y2={y(edge.fromLane)}
+                stroke={color}
+                strokeWidth={1.5}
+                opacity={0.25}
+              />
+            );
+          }
+          const x1 = x(edge.fromRow);
+          const y1 = y(edge.fromLane);
+          const x2 = x(edge.toRow);
+          const y2 = y(edge.toLane);
+          const mid = (x1 + x2) / 2;
+          const relatedEdge = related.has(edge.fromRow) && related.has(edge.toRow);
+          return (
+            <path
+              key={key}
+              d={`M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}`}
+              fill="none"
+              stroke={color}
+              strokeWidth={1.5}
+              opacity={relatedEdge ? 1 : 0.25}
+            />
+          );
+        })}
+        {layout.rows.map((row) => {
+          const color = LANE_COLORS[row.lane % LANE_COLORS.length];
+          const active = row.commit.hash === current;
+          return (
+            <g key={row.commit.hash} opacity={active || related.has(row.row) ? 1 : 0.35}>
+              {active ? (
+                <>
+                  <circle cx={x(row.row)} cy={y(row.lane)} r={9} fill={color} opacity={0.16} />
+                  <circle
+                    className="reins-timeline-pulse"
+                    cx={x(row.row)}
+                    cy={y(row.lane)}
+                    r={4.5}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth={1.5}
+                  />
+                  <circle
+                    className="reins-timeline-pulse is-delay"
+                    cx={x(row.row)}
+                    cy={y(row.lane)}
+                    r={4.5}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth={1.5}
+                  />
+                </>
+              ) : null}
+              {row.commit.parents.length > 1 ? (
+                <circle
+                  cx={x(row.row)}
+                  cy={y(row.lane)}
+                  r={7}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={1.5}
+                  opacity={0.45}
+                />
+              ) : null}
+              <circle
+                cx={x(row.row)}
+                cy={y(row.lane)}
+                r={active ? 4.5 : 4}
+                fill={active ? color : "var(--mantine-color-body)"}
+                stroke={color}
+                strokeWidth={2}
+              />
+            </g>
+          );
+        })}
+      </svg>
+      <div className="reins-timeline-labels">
+        {[...layout.rows].reverse().map((row) => (
+          <UnstyledButton
+            key={row.commit.hash}
+            className={`reins-timeline-label ${row.commit.hash === current ? "is-active" : ""}`}
+            style={{ width: TIMELINE_COL }}
+            onClick={() => onOpen(row.commit.hash)}
+            title={row.commit.subject}
+          >
+            <span className="reins-timeline-subject">{row.commit.subject}</span>
+            <span className="reins-timeline-meta">
+              {row.commit.shortHash} · {row.commit.author}
+            </span>
+            <span className="reins-timeline-date">{row.commit.date.slice(0, 10)}</span>
+            {row.commit.refs.length > 0 ? (
+              <span className="reins-timeline-refs">
+                {row.commit.refs.slice(0, 2).map((ref) => (
+                  <span key={ref} className="reins-timeline-ref">
+                    {ref}
+                  </span>
+                ))}
+              </span>
+            ) : null}
+          </UnstyledButton>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CommitDetail({ hash, onOpen }: { hash: string; onOpen: (hash: string) => void }) {
+  const { client } = useReins();
+  const state = useAsync(() => client.call<GitGraphCommit[]>("gitGraph", { limit: 300 }), []);
+  const commits = state.data ?? [];
+  const index = commits.findIndex((commit) => commit.hash === hash);
+  const commit = index >= 0 ? commits[index] : null;
+  if (!commit) return null;
+  const start = Math.max(0, Math.min(index - 3, commits.length - 6));
+  const around = commits.slice(start, start + 6);
+
+  return (
+    <Paper withBorder radius="lg" p="sm">
+      <Stack gap={6}>
+        <Group justify="space-between" gap="xs" wrap="nowrap">
+          <Text size="sm" fw={600} truncate style={{ minWidth: 0 }}>
+            {commit.subject}
+          </Text>
+          <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+            <Badge size="xs" variant="light" color={index === 0 ? "blue" : "gray"}>
+              {index === 0 ? "head" : "merged"}
+            </Badge>
+            {commit.parents.length > 1 ? (
+              <Badge size="xs" variant="light" color="grape">
+                merge
+              </Badge>
+            ) : null}
+            {commit.refs.slice(0, 3).map((ref) => (
+              <Badge key={ref} size="xs" variant="light" color="gray">
+                {ref}
+              </Badge>
+            ))}
+          </Group>
+        </Group>
+        <Text size="xs" c="dimmed">
+          {commit.shortHash} · {commit.author} · {commit.date.slice(0, 16).replace("T", " ")}
+        </Text>
+        <ScrollArea type="auto" scrollbars="x">
+          <CommitTimeline commits={around} current={hash} onOpen={onOpen} />
+        </ScrollArea>
+      </Stack>
+    </Paper>
+  );
+}
+
+function ReviewPage({ range, onRange }: { range: DiffRange; onRange: (range: DiffRange) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState(640);
+  const [bodyHeight, setBodyHeight] = useState(600);
+
+  useEffect(() => {
+    const update = () => {
+      const top = ref.current?.getBoundingClientRect().top ?? 0;
+      setHeight(Math.max(420, window.innerHeight - top - 140));
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  useEffect(() => {
+    const element = bodyRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const next = entry?.contentRect.height ?? 0;
+      if (next > 0) setBodyHeight(next);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={ref} style={{ height }}>
+      <Stack gap="sm" style={{ height: "100%" }}>
+        {range.mode === "commit" ? (
+          <CommitDetail hash={range.hash} onOpen={(hash) => onRange({ mode: "commit", hash })} />
+        ) : null}
+        <div ref={bodyRef} style={{ flex: 1, minHeight: 0 }}>
+          <ReviewWorkspace range={range} height={bodyHeight} />
+        </div>
+      </Stack>
+    </div>
   );
 }
 
@@ -906,7 +1201,15 @@ function KnowledgeTool({ tab, onTab }: { tab: KnowledgeTab; onTab: (tab: Knowled
   );
 }
 
-function HomeTool({ recent, onSelect }: { recent: string[]; onSelect: (tool: ToolId) => void }) {
+function HomeTool({
+  repo,
+  recent,
+  onSelect,
+}: {
+  repo: RepoStatusType["repo"];
+  recent: string[];
+  onSelect: (tool: ToolId) => void;
+}) {
   const ordered = [
     ...recent
       .map((id) => TOOLS.find((tool) => tool.id === id))
@@ -916,12 +1219,26 @@ function HomeTool({ recent, onSelect }: { recent: string[]; onSelect: (tool: Too
 
   return (
     <Stack gap="lg" maw={620} mx="auto" py="xl">
-      <Group gap="sm" align="center">
-        <img src={appIcon} alt="" width={44} height={44} style={{ borderRadius: 12 }} />
-        <Stack gap={0}>
-          <Title order={2} size="h2" fw={650}>
-            Reins
+      <Group gap="md" align="flex-start" wrap="nowrap">
+        <img
+          src={appIcon}
+          alt=""
+          width={64}
+          height={64}
+          style={{ borderRadius: 16, flexShrink: 0 }}
+        />
+        <Stack gap={2} style={{ minWidth: 0 }} pt={2}>
+          <Title
+            order={2}
+            size="h2"
+            fw={650}
+            style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          >
+            {repo.name}
           </Title>
+          <Text size="xs" c="dimmed" ff="monospace" truncate title={repo.root ?? repo.name}>
+            cwd: {tailPath(repo.root ?? repo.name)}
+          </Text>
           <Text size="sm" c="dimmed">
             Code structure, intent, and review.
           </Text>
@@ -1143,6 +1460,15 @@ function Workspace({
     setActive(previous);
   }, [history]);
 
+  const openReview = useCallback(
+    (range: DiffRange) => {
+      setGitRange(range);
+      setHistory((current) => [...current, active]);
+      setActive("review");
+    },
+    [active],
+  );
+
   const onNavigate = useCallback(
     (target: NavigationTarget) => {
       if (target.type === "symbol" && target.id) {
@@ -1157,11 +1483,10 @@ function Workspace({
         setKnowledgeTab("notes");
         select("knowledge");
       } else if (target.type === "diff") {
-        setGitTab("review");
-        select("git");
+        openReview(target.range ?? { mode: "working" });
       }
     },
-    [select],
+    [openReview, select],
   );
 
   const actions = useMemo<SpotlightActionData[]>(() => {
@@ -1196,7 +1521,7 @@ function Workspace({
         label: "Initialize repository",
         description: "Create .reins config, knowledge folders, graph, and surfaces",
         group: "Repository",
-        keywords: ["init", "setup", "bootstrap", "reins", "start"],
+        keywords: ["init", "setup", "bootstrap", "reinss", "start"],
         leftSection: <IconWand size={16} />,
         onClick: () => {
           setNotice("Initializing repository…");
@@ -1254,20 +1579,33 @@ function Workspace({
                 {notice}
               </Alert>
             ) : null}
-            {active === "status" ? <HomeTool recent={recent} onSelect={select} /> : null}
+            {active === "status" ? (
+              <HomeTool repo={repo} recent={recent} onSelect={select} />
+            ) : null}
             {active === "git" ? (
               <ToolPage
                 onBack={goBack}
                 title="Git"
-                description="Working tree, semantic diff, and review in one place."
+                description="Changes, history, branches, tags, and worktrees in one place."
               >
                 <GitTool
-                  range={gitRange}
-                  onRange={setGitRange}
                   tab={gitTab}
                   onTab={setGitTab}
-                  onChanged={() => setGitRange((current) => ({ ...current }))}
+                  onReview={(hash) => openReview({ mode: "commit", hash })}
                 />
+              </ToolPage>
+            ) : null}
+            {active === "review" ? (
+              <ToolPage
+                onBack={goBack}
+                title="Review"
+                description={
+                  gitRange.mode === "commit"
+                    ? `Commit ${gitRange.hash.slice(0, 8)}`
+                    : "Working tree review"
+                }
+              >
+                <ReviewPage range={gitRange} onRange={setGitRange} />
               </ToolPage>
             ) : null}
             {active === "surfaces" ? (
@@ -1343,27 +1681,27 @@ function Workspace({
               </Text>
             ) : null}
             {repos.map((path) => (
-              <Group key={path} gap={4} wrap="nowrap">
+              <Group key={path} gap={4} wrap="nowrap" style={{ minWidth: 0 }}>
                 <UnstyledButton
                   className="reins-row"
-                  style={{ flex: 1, width: "auto" }}
+                  style={{ flex: 1, width: "auto", minWidth: 0 }}
                   onClick={() => void switchRepo(path)}
                 >
-                  <Group gap="sm" wrap="nowrap">
-                    <IconFolder size={16} />
-                    <Stack gap={0}>
+                  <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                    <IconFolder size={16} style={{ flexShrink: 0 }} />
+                    <Stack gap={0} style={{ minWidth: 0 }}>
                       <span className="reins-row-main">{repoLabel(path)}</span>
-                      <Text size="xs" c="dimmed" ff="monospace">
-                        {path}
+                      <Text size="xs" c="dimmed" ff="monospace" truncate title={path}>
+                        {tailPath(path)}
                       </Text>
                     </Stack>
                   </Group>
                   {path === repo.root ? (
-                    <Badge size="xs" variant="light">
+                    <Badge size="xs" variant="light" style={{ flexShrink: 0 }}>
                       Current
                     </Badge>
                   ) : (
-                    <IconChevronRight size={14} />
+                    <IconChevronRight size={14} style={{ flexShrink: 0 }} />
                   )}
                 </UnstyledButton>
                 <Tooltip label="Remove from recent" position="left">
@@ -1464,19 +1802,21 @@ function Launcher({ onOpen }: { onOpen: (status: RepoStatusType) => void }) {
               Recent
             </Text>
             {repos.map((repo) => (
-              <Group key={repo} gap={4} wrap="nowrap">
+              <Group key={repo} gap={4} wrap="nowrap" style={{ minWidth: 0 }}>
                 <UnstyledButton
                   className="reins-row"
-                  style={{ flex: 1, width: "auto" }}
+                  style={{ flex: 1, width: "auto", minWidth: 0 }}
                   onClick={() => void open(repo)}
                 >
-                  <Group gap="sm">
-                    <IconFolder size={16} />
+                  <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                    <IconFolder size={16} style={{ flexShrink: 0 }} />
                     <span className="reins-row-main">{repoLabel(repo)}</span>
                   </Group>
-                  <Group gap="xs">
-                    <span className="reins-row-meta">{repo}</span>
-                    <IconChevronRight size={14} />
+                  <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                    <Text size="xs" c="dimmed" ff="monospace" truncate title={repo}>
+                      {tailPath(repo)}
+                    </Text>
+                    <IconChevronRight size={14} style={{ flexShrink: 0 }} />
                   </Group>
                 </UnstyledButton>
                 <Tooltip label="Remove from recent" position="left">

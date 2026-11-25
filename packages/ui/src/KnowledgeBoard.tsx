@@ -1,5 +1,5 @@
 import { Alert, Badge, Button, Group, Loader, Paper, ScrollArea, Stack, Text } from "@mantine/core";
-import type { KnowledgeNote, NoteSummary } from "@reins/core";
+import type { KnowledgeNote, NoteSummary } from "@reinss/core";
 import { useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";

@@ -173,7 +173,7 @@ Accepted decisions are binding until a new decision record supersedes them. Reje
 
 ### ADR-013 Git through the CLI
 
-**Status:** accepted.
+**Status:** superseded by ADR-020 for explicit branch, tag, and worktree actions. Read-only Git commands remain the default for diff, history, and status.
 
 **Context.** Diff ranges, blob reads, and commit metadata need Git. A library such as isomorphic-git avoids the binary but reimplements behavior and is slower for large objects.
 
@@ -229,7 +229,7 @@ Accepted decisions are binding until a new decision record supersedes them. Reje
 
 **Decision.** Use Mantine for components, theme, and layout primitives. Apply an Apple-style visual language with a warm paper light theme: `#e6d2a3` page, `#f8efdc` surfaces, `#2b2418` ink, `#6f5f45` muted, `#1f5f8b` accent, system font stack, hairline borders, 12 to 16 px radii, generous whitespace. Remove the top bar. `Cmd+K` opens a Mantine Spotlight palette, which is the only navigation. `MantineProvider` lives inside `ReinsProvider` so embedded hosts get the same theme. A bottom-left toggle switches between the paper light theme and the dark/blue theme; Mantine persists the choice.
 
-**Consequences.** The UI gains a consistent component layer and a smaller custom CSS surface. The code view uses CodeMirror with the GitHub light and dark themes, line numbers, and changed-line highlights. Mantine adds about 300 KB of CSS and 100 KB of JavaScript to the renderer. The palette is the only way to switch tools, so discoverability depends on the dock hint and the `Cmd+K` shortcut. The embeddable components now require Mantine CSS, which `@reins/ui/styles.css` imports.
+**Consequences.** The UI gains a consistent component layer and a smaller custom CSS surface. The code view uses CodeMirror with the GitHub light and dark themes, line numbers, and changed-line highlights. Mantine adds about 300 KB of CSS and 100 KB of JavaScript to the renderer. The palette is the only way to switch tools, so discoverability depends on the dock hint and the `Cmd+K` shortcut. The embeddable components now require Mantine CSS, which `@reinss/ui/styles.css` imports.
 
 **Rejected.** Keeping the top bar and adding Mantine only to panels. That leaves two navigation systems. Writing a custom design system instead of Mantine. That is more code for the same result.
 
@@ -244,6 +244,18 @@ Accepted decisions are binding until a new decision record supersedes them. Reje
 **Consequences.** The knowledge ledger now carries the project brief, requirements, technical decisions, and the plan for in-flight and archived changes. The spec-kit importer is removed. A Reins note with the same id wins over an imported file. OpenSpec's own workflow skills stay in OpenSpec; Reins only reads their output.
 
 **Rejected.** Keeping both importers. Two spec formats mean two mappings, two test fixtures, and an unclear first place to look. Parsing only `openspec/specs/` and ignoring changes. That loses the decisions and the plan, which are the reason to read OpenSpec first.
+
+### ADR-020 Explicit Git management and a Canvas Git tree
+
+**Status:** accepted. Supersedes ADR-013 for branch, tag, and worktree writes. Keeps ADR-008 for the code graph.
+
+**Context.** The Git view needs branch, tag, and worktree management, plus a history tree that stays smooth at 1,000 commits. The read-only Git allowlist in ADR-013 blocks the first. React Flow is the code graph renderer, but a commit graph is a different shape: fixed rows, lane routing, and a large virtual list.
+
+**Decision.** Keep Git reads on the fixed allowlist. Add explicit write actions for checkout, branch create/delete, tag create/delete, and worktree add/remove. Each action uses an argument array, validates ref names with `git check-ref-format`, and requires a confirmation in the UI for deletes and worktree removal. Build `GitTreeViewer` as a standalone `@reinss/ui` component with a Canvas renderer and `d3-zoom` for pan and zoom. The code graph keeps React Flow and dagre.
+
+**Consequences.** The Git view can manage refs without a second Git library. Write actions can change the working tree, so the UI reloads status and diff after each action. The Canvas tree draws only visible rows and uses device-pixel-ratio scaling. It is keyboard reachable and exposes a listbox role. The Git tree is the only custom graph renderer; the code graph rule in ADR-008 still holds.
+
+**Rejected.** Using React Flow for the commit graph. It adds DOM nodes per commit and does not give the lane routing or virtual row control the history view needs. Adding a full Git library. It duplicates Git behavior and loses the user's Git configuration.
 
 ## 2. Rejected ideas
 

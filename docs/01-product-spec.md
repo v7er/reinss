@@ -42,9 +42,9 @@ Primary persona: a developer working with one coding agent in a local repository
 | Surface | Form | Ships in |
 | --- | --- | --- |
 | Desktop app | Tauri window with repo session, graph, surfaces, diff, knowledge, review | Phase 1 (minimal), completed across phases |
-| CLI | `reins` binary | Phase 1 |
+| CLI | `reinss` binary | Phase 1 |
 | MCP server | `reins mcp` over stdio | Phase 1 (three tools), completed Phase 5 |
-| Embeddable UI | `@reins/ui` React components | Phase 1 (GraphView), expanded Phase 5 |
+| Embeddable UI | `@reinss/ui` React components | Phase 1 (GraphView), expanded Phase 5 |
 | Knowledge files | Markdown under `.reins/knowledge/`, plus read-only OpenSpec under `openspec/` | Phase 4, contract fixed Phase 1 |
 
 ## 5. Functional requirements
@@ -85,7 +85,7 @@ A surface is a user-reachable entry point: an HTTP route, a CLI command, a page,
 | SURF-3 | M | Link every surface to a graph node when one exists. | `symbolId` is a real Trail node ID or `null` with a reason; no invented IDs. |
 | SURF-4 | M | List and filter surfaces. | Filter by kind, framework, path, and confidence; counts are exact for the current filter. |
 | SURF-5 | M | Trace a flow from a surface. | Route to handler to callees in one view, with the same depth and confidence controls as GRAPH-2. |
-| SURF-6 | S | Honor OpenAPI and Swagger documents when present. | JSON specs are marked `evidence: openapi` and deduplicated against code-detected routes; a code route wins. An `x-source-file` extension links the surface to its handler file, resolved from the spec folder or its nearest ancestor that contains the file. YAML specs remain open. |
+| SURF-6 | S | Honor OpenAPI and Swagger documents when present. | JSON specs are marked `evidence: openapi` and deduplicated against code-detected routes; a code route wins. An `x-source-file` extension links the surface to its handler file or symbol, resolved from the spec folder or its nearest ancestor that contains the file. Append `@function` for a function or `@Class:method` for a class method; a class-only `@Class` also traces constructor-injected classes one level out. YAML specs remain open. |
 | SURF-7 | S | Add a detector without touching the engine. | A detector is a separate module with a fixture; registering it requires one line and one test file. |
 | SURF-8 | C | Discover package exports as public interfaces. | Workspace packages list exported symbols and their consumers. |
 | SURF-9 | M | Group surfaces by C1 component. | Components are discovered from workspace manifests; each surface carries a `componentId`; the five named kinds are webapp, mobile, backoffice, core, and cli. |
@@ -172,8 +172,12 @@ Tool-by-tool contracts are in [06. AI harness](06-ai-harness.md#4-mcp-tools).
 | GIT-1 | M | Show working tree status. | Every file reports staged, unstaged, untracked, or conflicted, with line counts when available. |
 | GIT-2 | M | Stage, unstage, and discard. | File-level operations return the new status; discard requires explicit confirmation. |
 | GIT-3 | M | Commit. | Message, amend, and sign-off; an empty message fails with `GIT_COMMIT_EMPTY`. |
-| GIT-4 | M | Show history. | Log with hash, author, date, and subject; a commit opens its semantic diff against its parent. |
-| GIT-5 | M | Keep destructive operations explicit. | No force push, no silent discard, no network call without a user action. |
+| GIT-4 | M | Show history as a graph. | A Canvas tree draws lanes, merge parents, branch, remote, and tag refs; selecting a commit opens its semantic diff against its parent. |
+| GIT-5 | M | Keep destructive operations explicit. | No force push, no silent discard, no network call without a user action. Branch, tag, and worktree deletes require confirmation. |
+| GIT-6 | M | Manage branches. | Local and remote branches list with upstream, ahead, and behind. Checkout, create, and delete are explicit actions. |
+| GIT-7 | M | Manage tags. | Tags list with annotated or lightweight status. Create and delete are explicit actions. |
+| GIT-8 | M | Manage worktrees. | Worktrees list with path, branch, head, and current state. Add and remove are explicit actions; the current worktree cannot be removed. |
+| GIT-9 | M | Review in one tab. | Diff and review share one range and one tab. The diff shows what changed; the review side shows graph context and knowledge. |
 
 ## 6. Component contract
 

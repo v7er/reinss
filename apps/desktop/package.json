@@ -1,5 +1,5 @@
 {
-  "name": "@reins/desktop",
+  "name": "@reinss/desktop",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,16 +8,16 @@
     "build": "tauri build",
     "dev:web": "vite",
     "build:web": "vite build",
-    "predev": "pnpm --filter reins build",
-    "prebuild": "pnpm --filter reins build",
+    "predev": "pnpm --filter @reinss/cli build",
+    "prebuild": "pnpm --filter @reinss/cli build",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@mantine/core": "^9.8.1",
     "@mantine/hooks": "^9.8.1",
     "@mantine/spotlight": "^9.8.1",
-    "@reins/core": "workspace:*",
-    "@reins/ui": "workspace:*",
+    "@reinss/core": "workspace:*",
+    "@reinss/ui": "workspace:*",
     "@tabler/icons-react": "^3.52.0",
     "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/plugin-dialog": "^2.4.0",

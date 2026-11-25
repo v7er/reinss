@@ -109,6 +109,84 @@ describe.skipIf(!hasTrail)("RepoSession", () => {
     expect(slice.root?.path).toBe("src/jobs.ts");
   });
 
+  it("traces an OpenAPI surface to a class method", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "reins-flow-openapi-method-"));
+    mkdirSync(path.join(dir, "src"), { recursive: true });
+    writeFileSync(path.join(dir, "package.json"), '{"name":"flow-openapi-method","private":true}');
+    writeFileSync(
+      path.join(dir, "src", "jobs.ts"),
+      "export class JobsController {\n  listJobs() {\n    return 1;\n  }\n}\n",
+    );
+    writeFileSync(
+      path.join(dir, "openapi.json"),
+      JSON.stringify({
+        openapi: "3.0.0",
+        paths: {
+          "/jobs": {
+            get: {
+              operationId: "listJobs",
+              "x-source-file": "src/jobs.ts@JobsController:listJobs",
+            },
+          },
+        },
+      }),
+    );
+    execSync("trail build .", { cwd: dir, stdio: "ignore" });
+    const session = await createSession(dir);
+    const page = await session.listSurfaces({ evidence: "openapi" });
+    const surface = page.items[0];
+    expect(surface?.symbolId).toBe("src/jobs.ts#JobsController.listJobs");
+    const slice = await session.flow({ target: surface?.id ?? "", depth: 1 });
+    expect(slice.root?.path).toBe("src/jobs.ts");
+    expect(slice.root?.name).toBe("listJobs");
+  });
+
+  it("adds constructor-injected classes one level outside a controller", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "reins-flow-openapi-inject-"));
+    mkdirSync(path.join(dir, "src"), { recursive: true });
+    writeFileSync(path.join(dir, "package.json"), '{"name":"flow-openapi-inject","private":true}');
+    writeFileSync(
+      path.join(dir, "src", "jobs.ts"),
+      [
+        "export class JobsService {",
+        "  list() {",
+        "    return [];",
+        "  }",
+        "}",
+        "export class JobsController {",
+        "  constructor(private readonly jobs: JobsService) {}",
+        "  listJobs() {",
+        "    return this.jobs.list();",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      path.join(dir, "openapi.json"),
+      JSON.stringify({
+        openapi: "3.0.0",
+        paths: {
+          "/jobs": {
+            get: { operationId: "listJobs", "x-source-file": "src/jobs.ts@JobsController" },
+          },
+        },
+      }),
+    );
+    execSync("trail build .", { cwd: dir, stdio: "ignore" });
+    const session = await createSession(dir);
+    const page = await session.listSurfaces({ evidence: "openapi" });
+    const surface = page.items[0];
+    expect(surface?.symbolId).toBe("src/jobs.ts#JobsController");
+    const slice = await session.flow({ target: surface?.id ?? "", depth: 1 });
+    expect(slice.root?.name).toBe("JobsController");
+    const injected = slice.nodes.find((node) => node.name === "JobsService");
+    expect(injected?.depth).toBe(1);
+    expect(
+      slice.edges.some((edge) => edge.source === slice.root?.id && edge.target === injected?.id),
+    ).toBe(true);
+  });
+
   it("refuses to trace an OpenAPI surface without x-source-file", async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "reins-flow-openapi-missing-"));
     mkdirSync(path.join(dir, "src"), { recursive: true });

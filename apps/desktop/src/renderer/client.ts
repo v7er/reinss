@@ -1,4 +1,4 @@
-import type { ReinsApi, ReinsClient, ReinsEvent, RepoStatus } from "@reins/core";
+import type { ReinsApi, ReinsClient, ReinsEvent, RepoStatus } from "@reinss/core";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";

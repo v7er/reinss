@@ -3,7 +3,6 @@ import {
   Controls,
   type Edge,
   Handle,
-  MiniMap,
   type Node,
   type NodeProps,
   Position,
@@ -24,7 +23,7 @@ import {
   Text,
   UnstyledButton,
 } from "@mantine/core";
-import type { GraphRequest, GraphSlice } from "@reins/core";
+import type { GraphRequest, GraphSlice } from "@reinss/core";
 import { useReins } from "./context.js";
 import { useAsync } from "./useAsync.js";
 
@@ -98,26 +97,35 @@ function layout(slice: GraphSlice): { nodes: Node<SymbolNodeData>[]; edges: Edge
 }
 
 export interface GraphViewProps {
-  root: { symbolId: string } | { query: string };
+  root?: GraphRequest["root"];
+  data?: GraphSlice;
   direction?: "in" | "out" | "both";
   depth?: number;
   maxNodes?: number;
   height?: number;
+  showModeSwitch?: boolean;
 }
 
 export function GraphView({
   root,
+  data,
   direction = "in",
   depth = 1,
   maxNodes = 500,
   height = 520,
+  showModeSwitch = true,
 }: GraphViewProps) {
   const { client, onNavigate } = useReins();
   const [mode, setMode] = useState<"graph" | "list">("graph");
-  const request: GraphRequest = { root, direction, depth, maxNodes };
+  const request: GraphRequest | null = root ? { root, direction, depth, maxNodes } : null;
   const state = useAsync(
-    () => client.call<GraphSlice>("graph", request),
-    [JSON.stringify(root), direction, depth, maxNodes],
+    () =>
+      data
+        ? Promise.resolve(data)
+        : request
+          ? client.call<GraphSlice>("graph", request)
+          : Promise.resolve(null),
+    [data, JSON.stringify(root ?? null), direction, depth, maxNodes],
   );
 
   const graph = useMemo(
@@ -172,16 +180,18 @@ export function GraphView({
             </Badge>
           ) : null}
         </Group>
-        <SegmentedControl
-          size="xs"
-          radius="xl"
-          value={mode}
-          onChange={(value) => setMode(value as "graph" | "list")}
-          data={[
-            { label: "Graph", value: "graph" },
-            { label: "List", value: "list" },
-          ]}
-        />
+        {showModeSwitch ? (
+          <SegmentedControl
+            size="xs"
+            radius="xl"
+            value={mode}
+            onChange={(value) => setMode(value as "graph" | "list")}
+            data={[
+              { label: "Graph", value: "graph" },
+              { label: "List", value: "list" },
+            ]}
+          />
+        ) : null}
       </Group>
       {mode === "graph" ? (
         <Paper withBorder radius="lg" p={0} className="reins-canvas" style={{ height }}>
@@ -196,7 +206,6 @@ export function GraphView({
           >
             <Background gap={24} size={1} />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable />
           </ReactFlow>
         </Paper>
       ) : (

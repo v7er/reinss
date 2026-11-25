@@ -1,4 +1,4 @@
-# reins
+# Reinss
 
 A local-first desktop app and embeddable React component set for three jobs:
 
@@ -6,15 +6,15 @@ A local-first desktop app and embeddable React component set for three jobs:
 2. Keep the intent next to the code: specs, decisions, constraints, and "how we build here", linked to real symbols and diff ranges.
 3. Review change by structure, not by line noise: moved, renamed, extracted, reformatted, and truly edited code, with a machine-readable form for agents.
 
-Reins is built on [Trail](https://github.com/trailhq) as the code graph. It does not fork or reimplement Trail's parser or storage. It wraps Trail behind one adapter, then adds surfaces, semantic diff, knowledge, and review on top.
+Reinss is built on [Trail](https://github.com/trailhq) as the code graph. It does not fork or reimplement Trail's parser or storage. It wraps Trail behind one adapter, then adds surfaces, semantic diff, knowledge, and review on top.
 
-**Status: implemented MVP.** The workspace, core, Trail adapter, surface scanners, semantic diff, knowledge ledger, CLI, MCP server, embeddable React components, and Tauri shell exist. Surfaces are grouped by C1 component (webapp, mobile, backoffice, core, cli), can be filtered to the lines a Git range changed, and verify their symbols against the Trail graph. The Git tool shows status, stages and unstages files, commits, and reads history with a semantic diff per commit. The desktop uses `Cmd+K` as its only navigation surface. Phase 6 hardening (packaging, Windows/Linux) remains; the file watcher is in. [TODO.md](TODO.md) tracks the gaps against the full product.
+**Status: implemented MVP.** The workspace, core, Trail adapter, surface scanners, semantic diff, knowledge ledger, CLI, MCP server, embeddable React components, and Tauri shell exist. Surfaces are grouped by C1 component (webapp, mobile, backoffice, core, cli), can be filtered to the lines a Git range changed, and verify their symbols against the Trail graph. The Git tool shows status, stages and unstages files, commits, reviews a range in one tab, draws history as a Canvas tree, and manages local and remote branches, tags, and worktrees. The desktop uses `Cmd+K` as its only navigation surface. Phase 6 hardening (packaging, Windows/Linux) remains; the file watcher is in. [TODO.md](TODO.md) tracks the gaps against the full product.
 
 ## Documents
 
 | File | Answers |
 | --- | --- |
-| [docs/01-product-spec.md](docs/01-product-spec.md) | What Reins is, who it serves, and what each release must do. Includes requirement IDs and acceptance criteria. |
+| [docs/01-product-spec.md](docs/01-product-spec.md) | What Reinss is, who it serves, and what each release must do. Includes requirement IDs and acceptance criteria. |
 | [docs/02-architecture.md](docs/02-architecture.md) | How the pieces fit: process model, packages, ports, API, storage, caching, security, budgets. |
 | [docs/03-data-contracts.md](docs/03-data-contracts.md) | The JSON and file contracts: config, symbols, surfaces, semantic diff, knowledge notes, errors, cache, versioning. |
 | [docs/04-roadmap.md](docs/04-roadmap.md) | Six phases with scope, exit gates, and what each phase refuses to build. |
@@ -27,9 +27,9 @@ Reins is built on [Trail](https://github.com/trailhq) as the code graph. It does
 
 ## OpenSpec knowledge
 
-Reins reads [OpenSpec](https://github.com/Fission-AI/OpenSpec) as the project knowledge base. OpenSpec is not only a spec folder. It holds the brief, requirements, technical decisions, and the task plan for every change, so a person or an agent starts there before reading code. This repository keeps its own knowledge base under `openspec/`.
+Reinss reads [OpenSpec](https://github.com/Fission-AI/OpenSpec) as the project knowledge base. OpenSpec is not only a spec folder. It holds the brief, requirements, technical decisions, and the task plan for every change, so a person or an agent starts there before reading code. This repository keeps its own knowledge base under `openspec/`.
 
-Reins imports these files read-only and marks them `source: openspec`:
+Reinss imports these files read-only and marks them `source: openspec`:
 
 | Path | Note type |
 | --- | --- |
@@ -41,7 +41,7 @@ Reins imports these files read-only and marks them `source: openspec`:
 | `openspec/changes/**/tasks.md` | `howto` |
 | `openspec/changes/**/specs/**/spec.md` | `spec` |
 
-`reins spec` lists the files. `reins notes` includes them, and `reins pack` includes imported constraints and decisions. Reins never writes to `openspec/`.
+`reinss spec` lists the files. `reinss notes` includes them, and `reinss pack` includes imported constraints and decisions. Reinss never writes to `openspec/`.
 
 ### Initialize in an existing project
 
@@ -76,16 +76,16 @@ Reins imports these files read-only and marks them `source: openspec`:
    openspec validate --all --strict
    ```
 
-5. Confirm Reins reads it:
+5. Confirm Reinss reads it:
 
    ```bash
-   reins spec
-   reins notes
+   reinss spec
+   reinss notes
    ```
 
 ### Initialize in a new project
 
-Use the `openspec-init` skill in [.agents/skills/openspec-init/SKILL.md](.agents/skills/openspec-init/SKILL.md). It installs the CLI, runs `openspec init`, writes the first `config.yaml`, seeds the first spec, and verifies that Reins sees the files.
+Use the `openspec-init` skill in [.agents/skills/openspec-init/SKILL.md](.agents/skills/openspec-init/SKILL.md). It installs the CLI, runs `openspec init`, writes the first `config.yaml`, seeds the first spec, and verifies that Reinss sees the files.
 
 Without an agent, run the same commands:
 
@@ -105,7 +105,7 @@ Then ask the agent to explore the idea and propose the first change. The first c
 | 1 | Strong codebase and one vertical slice | Done: `pnpm check` green; open a repo, search a symbol, see callers. |
 | 2 | Surfaces and graph exploration | Done: Express, Hono, Commander, Next.js, React Router, FastAPI, and OpenAPI JSON detectors; C1 component grouping; Git change overlay; flow view. |
 | 3 | Semantic diff | Done: move, rename, reformat, modify, extract, add, remove; Git ranges. |
-| 4 | Knowledge ledger | Done: notes, typed links, backlinks, OpenSpec import, `reins check`. |
+| 4 | Knowledge ledger | Done: notes, typed links, backlinks, OpenSpec import, `reinss check`. |
 | 5 | Review workspace and embed | Done: diff, graph, knowledge in one view; components mount in a host React app. |
 | 6 | Hardening and full agent layer | Partial: MCP, harness packs, skills, and the file watcher exist; packaging and Windows/Linux remain. |
 
@@ -113,15 +113,15 @@ The implementation follows the same boundaries the spec set: one Trail adapter, 
 
 ## UI
 
-![Reins light workspace](docs/assets/ui-home.png)
+![Reinss light workspace](docs/assets/ui-home.png)
 
-![Reins dark workspace](docs/assets/ui-dark.png)
+![Reinss dark workspace](docs/assets/ui-dark.png)
 
-![Reins surfaces](docs/assets/ui-surfaces.png)
+![Reinss surfaces](docs/assets/ui-surfaces.png)
 
-![Reins semantic diff](docs/assets/ui-diff.png)
+![Reinss semantic diff](docs/assets/ui-diff.png)
 
-Mantine theme with a warm paper light mode and the original dark/blue mode. The homepage is only recent repositories and `Cmd+K`. No top bar. `Cmd+K` opens the Spotlight palette. The workspace has three tools: Git (changes, semantic diff, review), Surfaces (entry points by component, flow, call graph), and Knowledge (notes, check).
+Mantine theme with a warm paper light mode and the original dark/blue mode. The homepage is only recent repositories and `Cmd+K`. No top bar. `Cmd+K` opens the Spotlight palette. The workspace has three tools: Git (changes, review, history tree, branches, tags, worktrees), Surfaces (entry points by component, flow, call graph), and Knowledge (notes, check).
 
 ## Product principles
 
@@ -156,36 +156,38 @@ CLI:
 
 ```bash
 # after publishing
-npx reins status <repo> --json
+npx @reinss/cli status <repo> --json
 
 # before publishing, run the local package through npx
-npx --yes --package ./apps/cli reins status <repo> --json
+npx --yes --package ./apps/cli reinss status <repo> --json
 
 # or use the local build directly
-pnpm reins status <repo> --json
-./bin/reins status <repo> --json
+pnpm reinss status <repo> --json
+./bin/reinss status <repo> --json
 ```
 
 The same commands work for `init`, `bootstrap`, `search`, `callers`, `callees`, `graph`, `surfaces`, `flow`, `diff`, `notes`, `note`, `propose`, `check`, `pack`, `spec`, and `mcp`. `bootstrap` is the idempotent one-step setup: config, knowledge folders, graph, and surfaces.
 
-Publish the three public packages:
+Publish the three public packages (`@reinss/core`, `@reinss/node`, `@reinss/cli`):
 
 ```bash
-pnpm release:dry
-pnpm release
+pnpm release:dry   # dry run, no changes
+pnpm bump          # patch-bump the public packages
+pnpm publish:all   # publish to npm
+pnpm release       # bump then publish
 ```
 
-`reins` is the CLI package. `@reins/core` and `@reins/node` are its dependencies. `@reins/ui` and the desktop app stay private for now.
+Log in to npm first with `npm login`. `@reinss/cli` is the CLI package. `@reinss/core` and `@reinss/node` are its dependencies. `@reinss/ui` and the desktop app stay private for now.
 
 Desktop: open a repository, then press `Cmd+K` (or `Ctrl+K`). There is no top bar. The Mantine Spotlight palette is the only navigation. Recent tools are saved locally. The center area shows one of three tools at a time: Git, Surfaces, or Knowledge.
 
-The Tauri shell spawns `apps/cli/dist/serve.js` as its sidecar. `pnpm dev` builds it first. If you run the Tauri binary directly, run `pnpm --filter reins build` once. Override the path with `REINS_SERVE_SCRIPT=/absolute/path/to/serve.js`.
+The Tauri shell spawns `apps/cli/dist/serve.js` as its sidecar. `pnpm dev` builds it first. If you run the Tauri binary directly, run `pnpm --filter @reinss/cli build` once. Override the path with `REINS_SERVE_SCRIPT=/absolute/path/to/serve.js`.
 
 Embed:
 
 ```tsx
-import { ReinsProvider, ReviewWorkspace, type ReinsClient } from '@reins/ui';
-import '@reins/ui/styles.css';
+import { ReinsProvider, ReviewWorkspace, type ReinsClient } from '@reinss/ui';
+import '@reinss/ui/styles.css';
 
 export function Review({ client }: { client: ReinsClient }) {
   return (

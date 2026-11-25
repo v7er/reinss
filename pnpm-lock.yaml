@@ -26,10 +26,10 @@ importers:
 
   apps/cli:
     dependencies:
-      '@reins/core':
+      '@reinss/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@reins/node':
+      '@reinss/node':
         specifier: workspace:*
         version: link:../../packages/node
       commander:
@@ -51,10 +51,10 @@ importers:
       '@mantine/spotlight':
         specifier: ^9.8.1
         version: 9.8.1(@mantine/core@9.8.1(@mantine/hooks@9.8.1(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(@mantine/hooks@9.8.1(react@19.3.1))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      '@reins/core':
+      '@reinss/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@reins/ui':
+      '@reinss/ui':
         specifier: workspace:*
         version: link:../../packages/ui
       '@tabler/icons-react':
@@ -115,7 +115,7 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.2
         version: 1.32.2(zod@4.6.7)
-      '@reins/core':
+      '@reinss/core':
         specifier: workspace:*
         version: link:../core
       diff:
@@ -151,7 +151,7 @@ importers:
       '@mantine/hooks':
         specifier: ^9.8.1
         version: 9.8.1(react@19.3.1)
-      '@reins/core':
+      '@reinss/core':
         specifier: workspace:*
         version: link:../core
       '@tabler/icons-react':
@@ -169,6 +169,12 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      d3-selection:
+        specifier: 3.0.1
+        version: 3.0.1
+      d3-zoom:
+        specifier: 3.0.1
+        version: 3.0.1
       dagre:
         specifier: ^0.8.5
         version: 0.8.5
@@ -185,6 +191,12 @@ importers:
         specifier: ^4.0.1
         version: 4.0.1
     devDependencies:
+      '@types/d3-selection':
+        specifier: 3.0.12
+        version: 3.0.12
+      '@types/d3-zoom':
+        specifier: 3.0.9
+        version: 3.0.9
       '@types/dagre':
         specifier: ^0.7.54
         version: 0.7.54

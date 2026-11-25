@@ -462,6 +462,54 @@ export interface GitCommitResult {
   status: GitStatus;
 }
 
+export interface GitBranch {
+  name: string;
+  remote: boolean;
+  current: boolean;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  head: string | null;
+  subject: string | null;
+}
+
+export interface GitBranches {
+  current: string | null;
+  local: GitBranch[];
+  remote: GitBranch[];
+}
+
+export interface GitTag {
+  name: string;
+  hash: string;
+  shortHash: string;
+  subject: string;
+  date: string;
+  annotated: boolean;
+}
+
+export interface GitWorktree {
+  path: string;
+  head: string | null;
+  branch: string | null;
+  bare: boolean;
+  detached: boolean;
+  locked: boolean;
+  prunable: boolean;
+  current: boolean;
+}
+
+export interface GitGraphCommit {
+  hash: string;
+  shortHash: string;
+  parents: string[];
+  author: string;
+  email: string;
+  date: string;
+  subject: string;
+  refs: string[];
+}
+
 export interface BootstrapResult {
   contractVersion: 1;
   created: string[];
@@ -480,6 +528,27 @@ export interface ReinsApi {
   gitDiscard(req: { paths: string[]; confirm: boolean }): Promise<GitStatus>;
   gitCommit(req: { message: string; amend?: boolean; signoff?: boolean }): Promise<GitCommitResult>;
   gitLog(req?: { limit?: number; path?: string }): Promise<GitCommit[]>;
+  gitGraph(req?: { limit?: number }): Promise<GitGraphCommit[]>;
+  gitBranches(): Promise<GitBranches>;
+  gitCheckoutBranch(req: { name: string; remote?: boolean }): Promise<GitStatus>;
+  gitCreateBranch(req: {
+    name: string;
+    startPoint?: string;
+    checkout?: boolean;
+  }): Promise<GitStatus>;
+  gitDeleteBranch(req: { name: string; force?: boolean }): Promise<GitStatus>;
+  gitTags(): Promise<GitTag[]>;
+  gitCreateTag(req: { name: string; ref?: string; message?: string }): Promise<GitTag[]>;
+  gitDeleteTag(req: { name: string }): Promise<GitTag[]>;
+  gitWorktrees(): Promise<GitWorktree[]>;
+  gitAddWorktree(req: {
+    path: string;
+    branch?: string;
+    createBranch?: boolean;
+    startPoint?: string;
+    detach?: boolean;
+  }): Promise<GitWorktree[]>;
+  gitRemoveWorktree(req: { path: string; force?: boolean }): Promise<GitWorktree[]>;
   searchSymbols(q: string, opts?: SearchOptions): Promise<SymbolHit[]>;
   listSymbols(req?: SymbolListRequest): Promise<SymbolHit[]>;
   graph(req: GraphRequest): Promise<GraphSlice>;

@@ -1,5 +1,5 @@
 import { MantineProvider } from "@mantine/core";
-import type { NavigationTarget, ReinsClient } from "@reins/core";
+import type { NavigationTarget, ReinsClient } from "@reinss/core";
 import { type ReactNode, useEffect, useState } from "react";
 import { ReinsContext } from "./context.js";
 import { reinsTheme } from "./theme.js";

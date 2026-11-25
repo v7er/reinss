@@ -33,7 +33,7 @@ pnpm test
 pnpm typecheck
 ```
 
-CLI runs from `apps/cli/dist/main.js` after `pnpm build`. Use `pnpm reins <command>` or `npx --yes --package ./apps/cli reins <command>` locally. After publishing, use `npx reins <command>`. The desktop app is `pnpm dev`. If `pnpm` is unavailable, use `npx pnpm@10` with a local store; do not change the lockfile format.
+CLI runs from `apps/cli/dist/main.js` after `pnpm build`. Use `pnpm reinss <command>` or `npx --yes --package ./apps/cli reinss <command>` locally. After publishing, use `npx @reinss/cli <command>`. The desktop app is `pnpm dev`. If `pnpm` is unavailable, use `npx pnpm@10` with a local store; do not change the lockfile format.
 
 Do not claim a command ran unless it did. Report the exact command and the result.
 
@@ -42,9 +42,9 @@ Do not claim a command ran unless it did. Report the exact command and the resul
 These are not preferences. Breaking one is a defect.
 
 1. **One graph source.** Trail's `graft/` is the only code graph. Never copy it into SQLite, JSON, or a second store.
-2. **One API.** `ReinsApi` in `@reins/core` is the only operation surface. CLI, Tauri, and MCP are thin adapters.
-3. **Pure core.** `@reins/core` imports no `node:*`, Tauri, React, or filesystem module.
-4. **No Node in UI.** `@reins/ui` never imports `@reins/node`, Tauri, or `node:*`.
+2. **One API.** `ReinsApi` in `@reinss/core` is the only operation surface. CLI, Tauri, and MCP are thin adapters.
+3. **Pure core.** `@reinss/core` imports no `node:*`, Tauri, React, or filesystem module.
+4. **No Node in UI.** `@reinss/ui` never imports `@reinss/node`, Tauri, or `node:*`.
 5. **Markdown is the knowledge source.** Notes live in `.reins/knowledge/` and are committed. OpenSpec under `openspec/` is read-only. Caches are disposable.
 6. **No silent installs or builds.** Reins detects Trail and asks. It never installs it, never builds a graph in the background.
 7. **No network by default.** Indexing, graph, diff, knowledge, and check work offline. LLM features are opt-in and arrive in Phase 6.

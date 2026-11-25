@@ -10,7 +10,7 @@ import {
   Tooltip,
   useComputedColorScheme,
 } from "@mantine/core";
-import type { DiffHunk } from "@reins/core";
+import type { DiffHunk } from "@reinss/core";
 import { IconCheck, IconCopy, IconX } from "@tabler/icons-react";
 import { githubDark, githubLight } from "@uiw/codemirror-theme-github";
 import CodeMirror from "@uiw/react-codemirror";

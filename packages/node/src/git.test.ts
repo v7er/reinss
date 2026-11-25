@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -80,5 +80,74 @@ describe("GitAdapter status and history", () => {
     await expect(session.gitDiscard({ paths: ["a.ts"], confirm: false })).rejects.toMatchObject({
       code: "GIT_CONFIRM_REQUIRED",
     });
+  });
+});
+
+describe("GitAdapter branches, tags, worktrees, and graph", () => {
+  it("lists local and remote branches, then creates, switches, and deletes", async () => {
+    const dir = makeRepo();
+    const git = new GitAdapter(dir);
+    const current = execSync("git branch --show-current", { cwd: dir }).toString().trim();
+    execSync("git branch feature", { cwd: dir, stdio: "ignore" });
+    execSync("git update-ref refs/remotes/origin/main HEAD", { cwd: dir, stdio: "ignore" });
+
+    const branches = await git.branches();
+    expect(branches.current).toBe(current);
+    expect(branches.local.some((branch) => branch.name === "feature")).toBe(true);
+    expect(branches.remote.some((branch) => branch.name === "origin/main")).toBe(true);
+    expect(branches.remote.some((branch) => branch.name === "origin")).toBe(false);
+
+    await git.checkoutBranch("feature");
+    expect((await git.status()).branch).toBe("feature");
+    await git.createBranch("next", current, true);
+    expect((await git.status()).branch).toBe("next");
+    await git.deleteBranch("feature");
+    expect((await git.branches()).local.some((branch) => branch.name === "feature")).toBe(false);
+  });
+
+  it("creates and deletes lightweight and annotated tags", async () => {
+    const dir = makeRepo();
+    const git = new GitAdapter(dir);
+    await git.createTag({ name: "v1.0.0", message: "release" });
+    await git.createTag({ name: "v1.0.1" });
+
+    const tags = await git.tags();
+    expect(tags.find((tag) => tag.name === "v1.0.0")?.annotated).toBe(true);
+    expect(tags.find((tag) => tag.name === "v1.0.1")?.annotated).toBe(false);
+
+    await git.deleteTag("v1.0.0");
+    expect((await git.tags()).some((tag) => tag.name === "v1.0.0")).toBe(false);
+  });
+
+  it("adds and removes a worktree", async () => {
+    const dir = makeRepo();
+    const git = new GitAdapter(dir);
+    const target = path.join(tmpdir(), `reins-wt-${process.pid}-${Date.now()}`);
+
+    const added = await git.addWorktree({ path: target, branch: "wt", createBranch: true });
+    const resolved = realpathSync(target);
+    expect(added.some((worktree) => worktree.path === resolved && worktree.branch === "wt")).toBe(
+      true,
+    );
+
+    await git.removeWorktree(target);
+    expect((await git.worktrees()).some((worktree) => worktree.path === resolved)).toBe(false);
+  });
+
+  it("returns parents and refs for a merge graph", async () => {
+    const dir = makeRepo();
+    const current = execSync("git branch --show-current", { cwd: dir }).toString().trim();
+    execSync("git checkout -qb feature", { cwd: dir, stdio: "ignore" });
+    writeFileSync(path.join(dir, "a.ts"), "export const a = 2;\n");
+    execSync("git add . && git commit -qm feature", { cwd: dir, stdio: "ignore" });
+    execSync(`git checkout -q ${current}`, { cwd: dir, stdio: "ignore" });
+    writeFileSync(path.join(dir, "b.ts"), "export const b = 2;\n");
+    execSync("git add . && git commit -qm main", { cwd: dir, stdio: "ignore" });
+    execSync("git merge --no-ff -qm merge feature", { cwd: dir, stdio: "ignore" });
+
+    const graph = await new GitAdapter(dir).graph(20);
+    const merge = graph.find((commit) => commit.parents.length === 2);
+    expect(merge).toBeTruthy();
+    expect(graph.some((commit) => commit.refs.includes("feature"))).toBe(true);
   });
 });

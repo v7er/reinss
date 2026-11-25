@@ -1,5 +1,5 @@
 {
-  "name": "@reins/core",
+  "name": "@reinss/core",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,7 +18,7 @@
   "dependencies": {
     "zod": "^4.6.7"
   },
-  "description": "Pure domain types, schemas, graph normalization, diff types, and knowledge rules for Reins.",
+  "description": "Pure domain types, schemas, graph normalization, diff types, and knowledge rules for Reinss.",
   "license": "MIT",
   "files": [
     "dist"

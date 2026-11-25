@@ -10,7 +10,7 @@ import {
   type SurfaceKind,
   sortSurfaces,
   surfaceId,
-} from "@reins/core";
+} from "@reinss/core";
 import fg from "fast-glob";
 import { resolveWithinRoot } from "./paths.js";
 
@@ -120,13 +120,15 @@ function makeSurface(input: {
   file: string;
   line: number;
   symbolName: string | null;
+  symbolId?: string | null;
   detector: string;
   componentId: string;
   confidence?: "exact" | "inferred";
   evidence?: "ast" | "openapi" | "config";
   metadata?: Record<string, string | number | boolean>;
 }): Surface {
-  const symbolId = input.symbolName ? `${input.file}#${input.symbolName}` : input.file;
+  const symbolId =
+    input.symbolId ?? (input.symbolName ? `${input.file}#${input.symbolName}` : input.file);
   const symbolName = input.symbolName ?? path.basename(input.file);
   return {
     id: surfaceId({
@@ -424,6 +426,20 @@ const specGlobs = ["**/openapi.json", "**/swagger.json"];
 
 // x-source-file is relative to the command root that generated the spec, which is the
 // spec's folder or an ancestor of it. A leading slash means repository root.
+// The optional @Symbol or @Class:method suffix names the handler inside the file.
+function parseSourceRef(value: unknown): { file: string; symbol: string | null } | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const raw = value.trim().replace(/\\/g, "/");
+  const at = raw.lastIndexOf("@");
+  if (at > 0) {
+    const symbol = raw.slice(at + 1);
+    if (/^[A-Za-z_$][\w$]*(?::[A-Za-z_$][\w$]*)?$/.test(symbol)) {
+      return { file: raw.slice(0, at), symbol };
+    }
+  }
+  return { file: raw, symbol: null };
+}
+
 function resolveSpecSource(
   root: string,
   specFile: string,
@@ -527,7 +543,18 @@ async function detectOpenApi(
           op["x-source-file"] ??
           pathItem["x-source-file"] ??
           (doc as Record<string, unknown>)["x-source-file"];
-        const sourceFile = resolveSpecSource(root, file, rawSource, sourceCache);
+        const sourceRef = parseSourceRef(rawSource);
+        const sourceFile = sourceRef
+          ? resolveSpecSource(root, file, sourceRef.file, sourceCache)
+          : null;
+        const sourceSymbol = sourceFile ? (sourceRef?.symbol ?? null) : null;
+        const [className, methodName] = sourceSymbol?.split(":") ?? [];
+        const symbolName = methodName ?? className ?? op.operationId ?? null;
+        const symbolId = sourceSymbol
+          ? `${sourceFile}#${methodName ? `${className}.${methodName}` : className}`
+          : sourceFile && op.operationId
+            ? `${sourceFile}#${op.operationId}`
+            : null;
         surfaces.push(
           makeSurface({
             kind: "http",
@@ -537,7 +564,8 @@ async function detectOpenApi(
             file: sourceFile ?? file,
             // shortcut: spec surfaces point at line 1, find the path key when navigation needs it.
             line: 1,
-            symbolName: op.operationId ?? null,
+            symbolName,
+            symbolId,
             detector: "openapi",
             componentId: sourceFile
               ? assignComponent(sourceFile, components)
@@ -547,6 +575,7 @@ async function detectOpenApi(
             metadata: {
               spec: file,
               ...(sourceFile ? { sourceFile } : { linkReason: "missing-x-source-file" }),
+              ...(sourceSymbol ? { sourceSymbol } : {}),
               ...(typeof rawSource === "string" && rawSource.trim()
                 ? { xSourceFile: rawSource.trim() }
                 : {}),

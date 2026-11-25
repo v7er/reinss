@@ -145,6 +145,7 @@
 
 .reins-row {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   width: 100%;
@@ -282,7 +283,7 @@
 
 .reins-diff {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -317,12 +318,14 @@
   background: transparent;
   border: 0;
   border-radius: 8px;
-  padding: 7px 9px;
+  padding: 6px 9px;
   font-family: var(--mantine-font-family-monospace);
   font-size: 11px;
 }
 
 .reins-diff-path {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -347,15 +350,22 @@
 
 .reins-op {
   display: grid;
-  grid-template-columns: 84px minmax(0, 1fr) auto;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
   gap: 8px;
   width: 100%;
   text-align: left;
   background: transparent;
   border: 0;
   border-bottom: 1px solid var(--reins-hairline);
-  padding: 7px 5px;
+  padding: 5px;
   border-radius: 8px;
+}
+
+.reins-op-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .reins-op.is-active,
@@ -555,21 +565,70 @@
   font-size: 13px;
 }
 
-.reins-review {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 16px;
+.reins-git-tree {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--reins-hairline);
+  border-radius: 16px;
+  background: var(--mantine-color-body);
 }
 
-.reins-review-side {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+.reins-git-tree-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.reins-git-tree-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  outline: none;
+}
+
+.reins-git-tree-scroll:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--reins-accent);
+}
+
+.reins-git-tree-error {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--mantine-color-red-4);
+  border-radius: 8px;
+  background: var(--mantine-color-body);
+}
+
+.reins-git-tree-hint {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  padding: 3px 8px;
+  border: 1px solid var(--reins-hairline);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--mantine-color-body) 88%, transparent);
+  color: var(--mantine-color-dimmed);
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.reins-git-tree-empty {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--reins-hairline);
+  border-radius: 16px;
+  background: var(--mantine-color-body);
 }
 
 @media (max-width: 900px) {
   .reins-diff,
-  .reins-review,
   .reins-board {
     grid-template-columns: 1fr;
   }

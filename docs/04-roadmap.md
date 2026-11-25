@@ -60,11 +60,11 @@ Total: roughly 12 to 20 weeks of focused work. Phases 2, 3, and 4 are independen
 **Ships.**
 
 - pnpm workspace with three packages and two apps, strict TypeScript, Biome, Vitest, GitHub Actions.
-- `@reins/core`: config schema, error model, API types, graph normalization, fingerprint, revision.
-- `@reins/node`: Trail adapter over JSON, repo session, path safety, process runner, in-memory cache.
-- `reins` CLI: `init`, `status`, `search`, `callers`, `callees`, `graph`, `mcp` with three tools.
+- `@reinss/core`: config schema, error model, API types, graph normalization, fingerprint, revision.
+- `@reinss/node`: Trail adapter over JSON, repo session, path safety, process runner, in-memory cache.
+- `reinss` CLI: `init`, `status`, `search`, `callers`, `callees`, `graph`, `mcp` with three tools.
 - Tauri app: repository picker, status strip, symbol search, callers graph, open in editor.
-- `@reins/ui`: `ReinsProvider`, `GraphView`, `RepoStatus`, one token stylesheet.
+- `@reinss/ui`: `ReinsProvider`, `GraphView`, `RepoStatus`, one token stylesheet.
 - Test harness: three fixture repositories, fake Trail binary, real Trail integration test behind a flag, recorded JSON fixtures, boundary check.
 - `AGENTS.md` and two project skills.
 
@@ -75,7 +75,7 @@ Detailed plan: [05. Phase 1 foundation](05-phase-1-foundation.md).
 **Exit gate.**
 
 - [ ] `pnpm install --frozen-lockfile && pnpm check` passes on a clean clone on macOS.
-- [ ] `pnpm --filter @reins/desktop build` produces a launchable app; the smoke test launches it and finds the window.
+- [ ] `pnpm --filter @reinss/desktop build` produces a launchable app; the smoke test launches it and finds the window.
 - [ ] `reins init` creates the config and knowledge folders, and refuses to overwrite an existing config.
 - [ ] Open `test/fixtures/graph-basic`, see `ready` with the correct node count.
 - [ ] Search `total` and see symbol results with file:line.
@@ -85,7 +85,7 @@ Detailed plan: [05. Phase 1 foundation](05-phase-1-foundation.md).
 - [ ] Production source (excluding tests, fixtures, generated) is at most 5,000 lines.
 - [ ] Runtime dependencies are at most 12, each on the whitelist.
 - [ ] The graph query p95 is at or under the Phase 1 budget on the large fixture (250 ms at depth 2).
-- [ ] Boundary test fails when a deliberate `node:fs` import is added to `@reins/ui`.
+- [ ] Boundary test fails when a deliberate `node:fs` import is added to `@reinss/ui`.
 
 **Risk.** The Trail adapter is the only place where an external JSON shape is trusted. Mitigation: record fixtures for every supported Trail version, validate with zod, and run a real-Trail test in CI when Trail is installed.
 

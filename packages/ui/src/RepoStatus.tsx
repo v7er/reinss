@@ -1,5 +1,5 @@
 import { Badge, Group, Text } from "@mantine/core";
-import type { RepoStatus as RepoStatusType } from "@reins/core";
+import type { RepoStatus as RepoStatusType } from "@reinss/core";
 import { useReins } from "./context.js";
 import { useAsync } from "./useAsync.js";
 

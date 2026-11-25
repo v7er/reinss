@@ -9,18 +9,18 @@ This is the engineering contract for Reins. It defines the process model, packag
 │ Hosts                                                                │
 │  ┌────────────────┐  ┌──────────────┐  ┌────────────┐  ┌───────────┐ │
 │  │ Tauri shell    │  │ Terminal     │  │ MCP client │  │ React app │ │
-│  │ (Rust+webview) │  │ `reins` CLI  │  │ (agent)    │  │ (embed)   │ │
+│  │ (Rust+webview) │  │ `reinss` CLI  │  │ (agent)    │  │ (embed)   │ │
 │  └───────┬────────┘  └──────┬───────┘  └─────┬──────┘  └─────┬─────┘ │
 └──────────┼──────────────────┼────────────────┼───────────────┼───────┘
            │ invoke           │ direct         │ stdio         │ client
            ▼                  ▼                ▼               ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│ @reins/node  ·  Node sidecar  ·  RepoSession  ·  ReinsApi             │
+│ @reinss/node  ·  Node sidecar  ·  RepoSession  ·  ReinsApi             │
 │  ports: TrailPort, GitPort, FsPort, ProcessPort, WatchPort            │
 └───────────────┬──────────────────────────────────────────────────────┘
                 │ pure calls
 ┌───────────────▼──────────────────────────────────────────────────────┐
-│ @reins/core                                                          │
+│ @reinss/core                                                          │
 │  config · errors · api types · surfaces · diff matcher · knowledge    │
 │  link graph · check rules · harness pack composer                    │
 │  ports: ParserPort, ClockPort                                       │
@@ -54,7 +54,7 @@ Two rules make this diagram hold:
 │   newline-delimited JSON over stdin/stdout            │
 │                                                       │
 │ renderer (system webview)                             │
-│   React 19, @reins/ui, Tauri invoke client            │
+│   React 19, @reinss/ui, Tauri invoke client            │
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -68,13 +68,13 @@ Rules:
 
 ### 2.2 CLI
 
-`reins` is an ESM Node 22 binary. It imports `@reins/node`, builds a `RepoSession` for the current directory or `--repo`, calls one API method, prints text or JSON, and exits. The CLI owns no logic beyond argument parsing, progress rendering, and exit codes.
+`@reinss/cli` is an ESM Node 22 binary. It imports `@reinss/node`, builds a `RepoSession` for the current directory or `--repo`, calls one API method, prints text or JSON, and exits. The CLI owns no logic beyond argument parsing, progress rendering, and exit codes.
 
-`reins mcp` starts the same session and serves MCP over stdio. It writes protocol messages to stdout, so all diagnostics go to stderr.
+`reinss mcp` starts the same session and serves MCP over stdio. It writes protocol messages to stdout, so all diagnostics go to stderr.
 
 ### 2.3 Embedded components
 
-A host renders `<ReinsProvider client={client}>` and mounts views. `ReinsProvider` includes `MantineProvider` with the Reins theme, so the host does not need its own provider. The host supplies a `ReinsClient`: the Tauri invoke client in the desktop app, a memory client in tests and docs, or its own transport. Nothing in `@reins/ui` assumes Tauri, a repository path, or a Node process.
+A host renders `<ReinsProvider client={client}>` and mounts views. `ReinsProvider` includes `MantineProvider` with the Reins theme, so the host does not need its own provider. The host supplies a `ReinsClient`: the Tauri invoke client in the desktop app, a memory client in tests and docs, or its own transport. Nothing in `@reinss/ui` assumes Tauri, a repository path, or a Node process.
 
 The desktop renderer uses the same provider and components. The only difference is the client implementation over Tauri invoke.
 
@@ -82,7 +82,7 @@ The desktop renderer uses the same provider and components. The only difference 
 
 ```text
 apps/desktop        private, Tauri Rust shell + Node sidecar + renderer
-apps/cli            published binary `reins` (includes `reins mcp`)
+apps/cli            published binary `reinss` (includes `reinss mcp`)
 packages/core       pure domain, published
 packages/node       Node adapters and RepoSession, published
 packages/ui         React components, published
@@ -96,9 +96,9 @@ node  <-/-> ui        forbidden
 
 | Package | Owns | Must not |
 | --- | --- | --- |
-| `@reins/core` | Types, validation, graph result shaping, surface types and IDs, diff types and operation helpers, knowledge schema and link rules, harness pack composer | Read files, spawn processes, import Node or Tauri, render React |
-| `@reins/node` | Trail and Git adapters, AST parser and diff matcher, surface detectors, knowledge loader, path safety, cache files, `RepoSession`, `ReinsApi` implementation, MCP server bootstrap | Contain UI, duplicate domain rules from core |
-| `@reins/ui` | React components, Mantine theme and tokens, keyboard behavior, view state, client interface consumption | Touch the filesystem, spawn processes, import `@reins/node` |
+| `@reinss/core` | Types, validation, graph result shaping, surface types and IDs, diff types and operation helpers, knowledge schema and link rules, harness pack composer | Read files, spawn processes, import Node or Tauri, render React |
+| `@reinss/node` | Trail and Git adapters, AST parser and diff matcher, surface detectors, knowledge loader, path safety, cache files, `RepoSession`, `ReinsApi` implementation, MCP server bootstrap | Contain UI, duplicate domain rules from core |
+| `@reinss/ui` | React components, Mantine theme and tokens, keyboard behavior, view state, client interface consumption | Touch the filesystem, spawn processes, import `@reinss/node` |
 | `apps/cli` | Argument parsing, exit codes, text rendering, MCP stdio wiring | Query logic, diff logic, knowledge parsing |
 | `apps/desktop` | Tauri window, native dialog, sidecar lifecycle, renderer layout | Query logic, second graph store |
 
@@ -106,14 +106,14 @@ Boundary enforcement is a test, not a convention. `scripts/check-boundaries.ts` 
 
 Why these five and not more:
 
-- No `@reins/schema` package. Types live in `core`; there is no second consumer that justifies a package.
-- No `@reins/mcp` package. MCP is a subcommand of the CLI.
-- No `@reins/desktop-kit`. Tauri-specific code has one consumer.
-- No `@reins/protocol` package. The API types live in core and are imported by every transport.
+- No `@reinss/schema` package. Types live in `core`; there is no second consumer that justifies a package.
+- No `@reinss/mcp` package. MCP is a subcommand of the CLI.
+- No `@reinss/desktop-kit`. Tauri-specific code has one consumer.
+- No `@reinss/protocol` package. The API types live in core and are imported by every transport.
 
 ## 4. Ports
 
-Adapters are narrow interfaces. The shapes below are the boundary contract; the MVP implements them as classes in `@reins/node`. They exist so core stays testable and Trail can be replaced without touching domain logic.
+Adapters are narrow interfaces. The shapes below are the boundary contract; the MVP implements them as classes in `@reinss/node`. They exist so core stays testable and Trail can be replaced without touching domain logic.
 
 ```ts
 // core
@@ -138,6 +138,17 @@ interface GitPort {
   changedFiles(root: string, range: DiffRange): Promise<FileChange[]>;
   readAt(root: string, rev: string, path: string): Promise<string>;
   log(root: string, path: string, limit: number): Promise<CommitInfo[]>;
+  graph(root: string, limit: number): Promise<GraphCommit[]>;
+  branches(root: string): Promise<BranchInfo[]>;
+  tags(root: string): Promise<TagInfo[]>;
+  worktrees(root: string): Promise<WorktreeInfo[]>;
+  checkout(root: string, branch: string, remote: boolean): Promise<void>;
+  createBranch(root: string, name: string, start: string | null): Promise<void>;
+  deleteBranch(root: string, name: string, force: boolean): Promise<void>;
+  createTag(root: string, name: string, ref: string | null, message: string | null): Promise<void>;
+  deleteTag(root: string, name: string): Promise<void>;
+  addWorktree(root: string, input: WorktreeInput): Promise<void>;
+  removeWorktree(root: string, path: string, force: boolean): Promise<void>;
 }
 
 interface FsPort {
@@ -153,7 +164,7 @@ interface WatchPort {
 }
 ```
 
-`watchRepo` in `@reins/node` implements this port with a recursive `fs.watch`, a 120 ms debounce, and an ignore list for build output, caches, and `.git` internals other than `index`, `HEAD`, and `refs/`.
+`watchRepo` in `@reinss/node` implements this port with a recursive `fs.watch`, a 120 ms debounce, and an ignore list for build output, caches, and `.git` internals other than `index`, `HEAD`, and `refs/`.
 
 Port rules:
 
@@ -164,7 +175,7 @@ Port rules:
 
 ## 5. One API, three transports
 
-The canonical interface, defined in `@reins/core`:
+The canonical interface, defined in `@reinss/core`:
 
 ```ts
 interface ReinsApi {
@@ -355,7 +366,7 @@ Reins indexes repositories it did not write. Treat repository content as untrust
 - **Parser only.** Reins never runs project scripts, package managers, tests, hooks, or build tools. Trail and Git are the only child processes.
 - **Command execution.** `spawn` with an argument array, `shell: false`. The sidecar spawns only `trail` and `git`; Rust spawns only the Node sidecar. Environment is inherited but `GIT_TERMINAL_PROMPT=0` and `GIT_OPTIONAL_LOCKS=0` are set. No user string is interpolated into a shell command.
 - **Path containment.** Normalize, resolve symlinks, then require the result to stay under the repository root. Refuse `..` and absolute paths in repository-relative fields. Re-check on the receiving side of every Tauri command.
-- **Git.** Read-only commands only: `rev-parse`, `status`, `diff`, `show`, `log`, `ls-tree`. No checkout, reset, clean, or stash.
+- **Git.** Read commands stay on the fixed allowlist: `rev-parse`, `status`, `diff`, `show`, `log`, `ls-tree`, `for-each-ref`, `worktree list`. Explicit user actions may run `checkout`, `branch`, `tag`, and `worktree add/remove` with argument arrays and ref validation. No reset, clean, or stash.
 - **Trail.** Run with the repository as cwd. Do not pass `--deep` unless the user explicitly enables the LLM pass.
 - **Rendering.** Code snippets and note bodies render as text. Markdown is sanitized; raw HTML is disabled by default. No `dangerouslySetInnerHTML` outside the sanitizer.
 - **Tauri.** The renderer runs in the system webview with a strict CSP. Rust exposes four commands. The Node sidecar is spawned by Rust with a fixed script path and no shell.
@@ -395,11 +406,11 @@ Measurement method:
 | --- | --- | --- |
 | Install | `pnpm install --frozen-lockfile` | pnpm 10, catalog versions |
 | Dev desktop | `pnpm dev` | Tauri CLI, Vite HMR renderer |
-| Dev CLI | `pnpm --filter reins dev -- status` | tsx or built output |
+| Dev CLI | `pnpm --filter @reinss/cli dev -- status` | tsx or built output |
 | Build | `pnpm build` | tsup, Vite, Tauri |
 | Check | `pnpm check` | format check, lint, typecheck, boundary test, unit tests |
 | Test | `pnpm test` | Vitest, integration opt-in |
-| Package desktop | `pnpm --filter @reins/desktop build` | Tauri binary; bundle disabled in the MVP |
+| Package desktop | `pnpm --filter @reinss/desktop build` | Tauri binary; bundle disabled in the MVP |
 | Publish | `pnpm release` | npm packages, not the desktop app |
 
 Build rules:

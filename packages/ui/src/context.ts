@@ -1,4 +1,4 @@
-import type { NavigationTarget, ReinsClient } from "@reins/core";
+import type { NavigationTarget, ReinsClient } from "@reinss/core";
 import { createContext, useContext } from "react";
 
 export interface ReinsContextValue {

@@ -67,7 +67,7 @@ The system SHALL trace route to handler to callees in one view with the same dep
 
 ### Requirement: Honor OpenAPI documents
 
-The system SHALL import routes from OpenAPI or Swagger documents when present, mark them `source: openapi`, and deduplicate them against code-detected routes.
+The system SHALL import routes from OpenAPI or Swagger documents when present, mark them `source: openapi`, and deduplicate them against code-detected routes. An `x-source-file` value MAY name a handler symbol with `@function` or `@Class:method`; a class-only `@Class` SHALL trace constructor-injected classes one level out.
 
 #### Scenario: Importing an OpenAPI route
 

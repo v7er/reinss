@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { type DiffRange, isReinsError, type NoteProposal } from "@reins/core";
+import { type DiffRange, isReinsError, type NoteProposal } from "@reinss/core";
 import { z } from "zod";
 import type { RepoSession } from "./session.js";
 
@@ -24,7 +24,7 @@ const rangeSchema = z.object({
 });
 
 export async function startMcpServer(session: RepoSession): Promise<void> {
-  const server = new McpServer({ name: "reins", version: "0.1.0" });
+  const server = new McpServer({ name: "reinss", version: "0.1.0" });
 
   server.registerTool(
     "reins_status",
@@ -206,6 +206,74 @@ export async function startMcpServer(session: RepoSession): Promise<void> {
               : {}),
           }),
         );
+      } catch (err) {
+        return failure(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "reins_git_graph",
+    {
+      description:
+        "Git history graph with parents and refs. Use for branch topology, merges, and release tags. Do not use for file contents.",
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(1000).optional(),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return text(await session.gitGraph({ limit: args.limit ?? 200 }));
+      } catch (err) {
+        return failure(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "reins_git_branches",
+    {
+      description:
+        "List local and remote branches with upstream tracking, ahead/behind counts, and head commit. Read-only.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => {
+      try {
+        return text(await session.gitBranches());
+      } catch (err) {
+        return failure(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "reins_git_tags",
+    {
+      description: "List tags with annotated/lightweight status, commit, date, and subject.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => {
+      try {
+        return text(await session.gitTags());
+      } catch (err) {
+        return failure(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "reins_git_worktrees",
+    {
+      description: "List Git worktrees with path, branch, head, and current/locked state.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => {
+      try {
+        return text(await session.gitWorktrees());
       } catch (err) {
         return failure(err);
       }

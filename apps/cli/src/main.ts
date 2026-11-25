@@ -7,14 +7,14 @@ import {
   isReinsError,
   type NoteProposal,
   type NoteType,
-} from "@reins/core";
-import { createSession, listOpenSpecFiles, realRoot, startMcpServer } from "@reins/node";
+} from "@reinss/core";
+import { createSession, listOpenSpecFiles, realRoot, startMcpServer } from "@reinss/node";
 import { Command } from "commander";
 
 const program = new Command();
 
 program
-  .name("reins")
+  .name("reinss")
   .description("Local code structure, intent, and semantic review.")
   .version("0.1.0");
 
@@ -518,6 +518,252 @@ git
           process.stdout.write(
             `${commit.shortHash} ${commit.date.slice(0, 10)} ${commit.author} ${commit.subject}\n`,
           );
+        }
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+git
+  .command("branches")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (opts: { dir: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(opts.dir);
+      const branches = await session.gitBranches();
+      if (opts.json) ok(branches);
+      else {
+        process.stdout.write(`current ${branches.current ?? "detached"}\n`);
+        for (const branch of branches.local) {
+          process.stdout.write(
+            `${branch.current ? "*" : " "} ${branch.name}${branch.upstream ? ` -> ${branch.upstream}` : ""}\n`,
+          );
+        }
+        for (const branch of branches.remote) {
+          process.stdout.write(`  ${branch.name}\n`);
+        }
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+git
+  .command("checkout")
+  .argument("<name>", "branch name")
+  .option("--remote", "check out a remote branch as a local tracking branch")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (name: string, opts: { remote?: boolean; dir: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(opts.dir);
+      const status = await session.gitCheckoutBranch({ name, remote: opts.remote ?? false });
+      if (opts.json) ok(status);
+      else process.stdout.write(`checked out ${status.branch ?? name}\n`);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+git
+  .command("create-branch")
+  .argument("<name>", "branch name")
+  .option("--start <ref>", "start point")
+  .option("--checkout", "check out the new branch")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(
+    async (
+      name: string,
+      opts: { start?: string; checkout?: boolean; dir: string; json?: boolean },
+    ) => {
+      try {
+        const session = await sessionFor(opts.dir);
+        const status = await session.gitCreateBranch({
+          name,
+          ...(opts.start ? { startPoint: opts.start } : {}),
+          checkout: opts.checkout ?? false,
+        });
+        if (opts.json) ok(status);
+        else process.stdout.write(`created ${name}\n`);
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
+
+git
+  .command("delete-branch")
+  .argument("<name>", "branch name")
+  .option("--force", "delete even when unmerged")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (name: string, opts: { force?: boolean; dir: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(opts.dir);
+      const status = await session.gitDeleteBranch({ name, force: opts.force ?? false });
+      if (opts.json) ok(status);
+      else process.stdout.write(`deleted ${name}\n`);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+git
+  .command("tags")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (opts: { dir: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(opts.dir);
+      const tags = await session.gitTags();
+      if (opts.json) ok(tags);
+      else {
+        for (const tag of tags) {
+          process.stdout.write(
+            `${tag.name}${tag.annotated ? " (annotated)" : ""} ${tag.shortHash} ${tag.subject}\n`,
+          );
+        }
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+git
+  .command("tag")
+  .argument("<name>", "tag name")
+  .option("--ref <ref>", "commit or ref to tag")
+  .option("--message <text>", "annotated tag message")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(
+    async (name: string, opts: { ref?: string; message?: string; dir: string; json?: boolean }) => {
+      try {
+        const session = await sessionFor(opts.dir);
+        const tags = await session.gitCreateTag({
+          name,
+          ...(opts.ref ? { ref: opts.ref } : {}),
+          ...(opts.message ? { message: opts.message } : {}),
+        });
+        if (opts.json) ok(tags);
+        else process.stdout.write(`created tag ${name}\n`);
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
+
+git
+  .command("delete-tag")
+  .argument("<name>", "tag name")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (name: string, opts: { dir: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(opts.dir);
+      const tags = await session.gitDeleteTag({ name });
+      if (opts.json) ok(tags);
+      else process.stdout.write(`deleted tag ${name}\n`);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+git
+  .command("worktrees")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (opts: { dir: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(opts.dir);
+      const worktrees = await session.gitWorktrees();
+      if (opts.json) ok(worktrees);
+      else {
+        for (const worktree of worktrees) {
+          process.stdout.write(
+            `${worktree.current ? "*" : " "} ${worktree.path} ${worktree.branch ?? "detached"}\n`,
+          );
+        }
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+git
+  .command("worktree-add")
+  .argument("<path>", "worktree path")
+  .option("--branch <name>", "branch to check out or create")
+  .option("--create", "create the branch")
+  .option("--start <ref>", "start point for a new branch")
+  .option("--detach", "detach HEAD")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(
+    async (
+      target: string,
+      opts: {
+        branch?: string;
+        create?: boolean;
+        start?: string;
+        detach?: boolean;
+        dir: string;
+        json?: boolean;
+      },
+    ) => {
+      try {
+        const session = await sessionFor(opts.dir);
+        const worktrees = await session.gitAddWorktree({
+          path: target,
+          ...(opts.branch ? { branch: opts.branch } : {}),
+          ...(opts.create ? { createBranch: true } : {}),
+          ...(opts.start ? { startPoint: opts.start } : {}),
+          ...(opts.detach ? { detach: true } : {}),
+        });
+        if (opts.json) ok(worktrees);
+        else process.stdout.write(`added worktree ${target}\n`);
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
+
+git
+  .command("worktree-remove")
+  .argument("<path>", "worktree path")
+  .option("--force", "remove even with local changes")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (target: string, opts: { force?: boolean; dir: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(opts.dir);
+      const worktrees = await session.gitRemoveWorktree({
+        path: target,
+        force: opts.force ?? false,
+      });
+      if (opts.json) ok(worktrees);
+      else process.stdout.write(`removed worktree ${target}\n`);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+git
+  .command("graph")
+  .option("--dir <dir>", "repository root", ".")
+  .option("--limit <n>", "max commits", "200")
+  .option("--json", "machine-readable output")
+  .action(async (opts: { dir: string; limit: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(opts.dir);
+      const commits = await session.gitGraph({ limit: Number(opts.limit) });
+      if (opts.json) ok(commits);
+      else {
+        for (const commit of commits) {
+          process.stdout.write(`${commit.shortHash} ${commit.refs.join(", ")} ${commit.subject}\n`);
         }
       }
     } catch (err) {

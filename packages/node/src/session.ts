@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { parse } from "@babel/parser";
 import {
   assignComponent,
   type BootstrapResult,
@@ -16,9 +17,13 @@ import {
   finalizeDiff,
   finalizeFileDiff,
   folderForType,
+  type GitBranches,
   type GitCommit,
   type GitCommitResult,
+  type GitGraphCommit,
   type GitStatus,
+  type GitTag,
+  type GitWorktree,
   type GraphEdge,
   type GraphNode,
   type GraphRequest,
@@ -50,7 +55,7 @@ import {
   type SymbolHit,
   type SymbolListRequest,
   verifySurfaceSymbols,
-} from "@reins/core";
+} from "@reinss/core";
 import fg from "fast-glob";
 import { readCache, writeCache } from "./cache.js";
 import { discoverComponents } from "./components.js";
@@ -63,7 +68,7 @@ import { TrailAdapter } from "./trail.js";
 
 const ADAPTER_VERSION = "0.1.0";
 const SURFACE_CACHE = ".reins/.cache/surfaces.json";
-const SURFACE_DETECTOR_VERSION = 6;
+const SURFACE_DETECTOR_VERSION = 7;
 
 interface SurfaceCacheData {
   surfaces: Surface[];
@@ -124,6 +129,76 @@ function sharedPathSegments(a: string, b: string): number {
   let count = 0;
   while (count < left.length && count < right.length && left[count] === right[count]) count += 1;
   return count;
+}
+
+interface AstNode {
+  type?: string;
+  [key: string]: unknown;
+}
+
+function walkAst(node: unknown, cb: (node: AstNode) => void): void {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) {
+    for (const item of node) walkAst(item, cb);
+    return;
+  }
+  const current = node as AstNode;
+  if (typeof current.type === "string") cb(current);
+  for (const [key, value] of Object.entries(current)) {
+    if (key === "loc" || key === "start" || key === "end" || key === "tokens" || key === "comments")
+      continue;
+    if (value && typeof value === "object") walkAst(value, cb);
+  }
+}
+
+function typeName(node: AstNode | undefined): string | null {
+  if (node?.type !== "TSTypeReference") return null;
+  const name = node.typeName as AstNode | undefined;
+  if (name?.type === "Identifier" && typeof name.name === "string") return name.name;
+  if (name?.type === "TSQualifiedName") {
+    const right = name.right as AstNode | undefined;
+    if (right?.type === "Identifier" && typeof right.name === "string") return right.name;
+  }
+  return null;
+}
+
+function paramType(param: unknown): string | null {
+  if (!param || typeof param !== "object") return null;
+  const node = param as AstNode;
+  if (node.type === "TSParameterProperty") return paramType(node.parameter);
+  if (node.type === "AssignmentPattern") return paramType(node.left);
+  const annotation = node.typeAnnotation as AstNode | undefined;
+  if (annotation?.type !== "TSTypeAnnotation") return null;
+  return typeName(annotation.typeAnnotation as AstNode | undefined);
+}
+
+// Constructor parameter types are the injected dependencies of a controller class.
+function constructorTypes(source: string, className: string): string[] {
+  let ast: AstNode;
+  try {
+    ast = parse(source, {
+      sourceType: "unambiguous",
+      errorRecovery: true,
+      plugins: ["typescript", "jsx"],
+    }) as unknown as AstNode;
+  } catch {
+    return [];
+  }
+  const types: string[] = [];
+  walkAst(ast, (node) => {
+    if (node.type !== "ClassDeclaration") return;
+    const id = node.id as AstNode | undefined;
+    if (id?.name !== className) return;
+    const body = node.body as AstNode | undefined;
+    for (const member of (body?.body as AstNode[] | undefined) ?? []) {
+      if (member.type !== "ClassMethod" || member.kind !== "constructor") continue;
+      for (const param of (member.params as unknown[] | undefined) ?? []) {
+        const type = paramType(param);
+        if (type) types.push(type);
+      }
+    }
+  });
+  return types;
 }
 
 export class RepoSession implements ReinsApi {
@@ -301,6 +376,70 @@ export class RepoSession implements ReinsApi {
     return this.git.log(req?.limit ?? 30, req?.path);
   }
 
+  async gitGraph(req?: { limit?: number }): Promise<GitGraphCommit[]> {
+    return this.git.graph(req?.limit ?? 200);
+  }
+
+  async gitBranches(): Promise<GitBranches> {
+    return this.git.branches();
+  }
+
+  async gitCheckoutBranch(req: { name: string; remote?: boolean }): Promise<GitStatus> {
+    const status = await this.git.checkoutBranch(req.name, req.remote);
+    this.invalidate();
+    return status;
+  }
+
+  async gitCreateBranch(req: {
+    name: string;
+    startPoint?: string;
+    checkout?: boolean;
+  }): Promise<GitStatus> {
+    const status = await this.git.createBranch(req.name, req.startPoint, req.checkout);
+    this.invalidate();
+    return status;
+  }
+
+  async gitDeleteBranch(req: { name: string; force?: boolean }): Promise<GitStatus> {
+    const status = await this.git.deleteBranch(req.name, req.force);
+    this.invalidate();
+    return status;
+  }
+
+  async gitTags(): Promise<GitTag[]> {
+    return this.git.tags();
+  }
+
+  async gitCreateTag(req: { name: string; ref?: string; message?: string }): Promise<GitTag[]> {
+    return this.git.createTag(req);
+  }
+
+  async gitDeleteTag(req: { name: string }): Promise<GitTag[]> {
+    return this.git.deleteTag(req.name);
+  }
+
+  async gitWorktrees(): Promise<GitWorktree[]> {
+    return this.git.worktrees();
+  }
+
+  async gitAddWorktree(req: {
+    path: string;
+    branch?: string;
+    createBranch?: boolean;
+    startPoint?: string;
+    detach?: boolean;
+  }): Promise<GitWorktree[]> {
+    const worktrees = await this.git.addWorktree(req);
+    this.invalidate();
+    return worktrees;
+  }
+
+  async gitRemoveWorktree(req: { path: string; force?: boolean }): Promise<GitWorktree[]> {
+    const worktrees = await this.git.removeWorktree(req.path, req.force);
+    this.invalidate();
+    return worktrees;
+  }
+
   async searchSymbols(q: string, opts?: SearchOptions): Promise<SymbolHit[]> {
     const limit = Math.min(Math.max(opts?.limit ?? 10, 1), 50);
     const result = await this.trail.ask(q, limit);
@@ -330,7 +469,7 @@ export class RepoSession implements ReinsApi {
   private untraceable(surface: Surface): ReinsError | null {
     if (surface.evidence !== "openapi" || surface.metadata.sourceFile) return null;
     const target = `${surface.method ?? ""} ${surface.route ?? surface.label}`.trim();
-    const message = `OpenAPI surface ${target} has no x-source-file, so Reins cannot trace it to code.\nAdd "x-source-file" to the operation, path, or document in openapi.json:\n{ "get": { "operationId": "listJobs", "x-source-file": "src/jobs.ts" } }\nThen rescan surfaces.`;
+    const message = `OpenAPI surface ${target} has no x-source-file, so Reins cannot trace it to code.\nAdd "x-source-file" to the operation, path, or document in openapi.json:\n{ "get": { "operationId": "listJobs", "x-source-file": "src/jobs.ts@JobsController:listJobs" } }\nThen rescan surfaces.`;
     return new ReinsError("SURFACE_UNTRACEABLE", message, {
       details: { surfaceId: surface.id, reason: "missing-x-source-file" },
     });
@@ -345,15 +484,15 @@ export class RepoSession implements ReinsApi {
       });
       if (hits.length === 1 && hits[0]?.id) return hits[0].id;
     }
-    // x-source-file names a file, not a symbol: start from its first symbol.
+    // x-source-file without a symbol suffix: start from the file's first symbol.
     const entries = await this.skeletonEntries(surface.file);
     const entry = entries[0];
     return entry ? `${entry.file}#${entry.name}` : null;
   }
 
-  private async resolveRoot(req: GraphRequest): Promise<string> {
+  private async resolveRoot(req: GraphRequest): Promise<{ symbol: string; surface?: Surface }> {
     const root = req.root;
-    if ("symbolId" in root) return root.symbolId;
+    if ("symbolId" in root) return { symbol: root.symbolId };
     if ("surfaceId" in root) {
       const surfaceId = root.surfaceId;
       const page = await this.listSurfaces({ limit: 5000 });
@@ -364,7 +503,7 @@ export class RepoSession implements ReinsApi {
       const untraceable = this.untraceable(surface);
       if (untraceable) throw untraceable;
       const symbol = await this.surfaceSymbol(surface);
-      if (symbol) return symbol;
+      if (symbol) return { symbol, surface };
       throw new ReinsError("SYMBOL_NOT_FOUND", `Surface ${surface.id} has no linked symbol.`, {
         details: {
           surfaceId: surface.id,
@@ -384,11 +523,95 @@ export class RepoSession implements ReinsApi {
     }
     const id = hits[0]?.id;
     if (!id) throw new ReinsError("SYMBOL_NOT_FOUND", `No symbol matched "${query}".`);
-    return id;
+    return { symbol: id };
+  }
+
+  private async resolveInjected(typeName: string): Promise<GraphNode | null> {
+    try {
+      const hits = await this.searchSymbols(typeName, { limit: 5 });
+      const hit = hits.find((item) => item.name === typeName && item.kind === "class" && item.id);
+      if (!hit?.id) return null;
+      return {
+        id: hit.id,
+        name: hit.name,
+        kind: hit.kind,
+        path: hit.path,
+        startLine: hit.startLine ?? 1,
+        endLine: hit.endLine ?? hit.startLine ?? 1,
+        depth: 1,
+        external: false,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private async injectedNodes(
+    root: GraphNode,
+  ): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+    const source = await fs
+      .readFile(resolveWithinRoot(this.root, root.path), "utf8")
+      .catch(() => null);
+    if (!source) return { nodes: [], edges: [] };
+    const nodes: GraphNode[] = [];
+    const edges: GraphEdge[] = [];
+    for (const type of constructorTypes(source, root.name)) {
+      const node = await this.resolveInjected(type);
+      if (!node || nodes.some((item) => item.id === node.id)) continue;
+      nodes.push(node);
+      edges.push({
+        source: root.id,
+        target: node.id,
+        relation: "references",
+        depth: 1,
+        line: null,
+      });
+    }
+    return { nodes, edges };
+  }
+
+  private async withInjected(
+    slice: GraphSlice,
+    surface: Surface,
+    maxNodes: number,
+  ): Promise<GraphSlice> {
+    if (
+      surface.evidence !== "openapi" ||
+      slice.direction === "in" ||
+      !slice.root ||
+      slice.root.kind !== "class"
+    ) {
+      return slice;
+    }
+    const injected = await this.injectedNodes(slice.root);
+    if (injected.nodes.length === 0) return slice;
+    const nodes = [...slice.nodes];
+    const seen = new Set(nodes.map((node) => node.id));
+    for (const node of injected.nodes) {
+      if (seen.has(node.id)) continue;
+      seen.add(node.id);
+      nodes.push(node);
+    }
+    const edges = [
+      ...slice.edges,
+      ...injected.edges.filter((edge) => seen.has(edge.source) && seen.has(edge.target)),
+    ];
+    const truncated = nodes.length > maxNodes;
+    const capped = truncated ? nodes.slice(0, maxNodes) : nodes;
+    const kept = new Set(capped.map((node) => node.id));
+    return {
+      ...slice,
+      nodes: capped,
+      edges: edges.filter((edge) => kept.has(edge.source) && kept.has(edge.target)),
+      truncated: slice.truncated || truncated,
+      truncatedBy: truncated ? "nodes" : slice.truncatedBy,
+      effectiveDepth: Math.max(slice.effectiveDepth, 1),
+    };
   }
 
   async graph(req: GraphRequest): Promise<GraphSlice> {
-    const symbol = await this.resolveRoot(req);
+    const resolved = await this.resolveRoot(req);
+    const symbol = resolved.symbol;
     const depth = Math.min(Math.max(req.depth ?? 1, 1), 5);
     const maxNodes = Math.min(Math.max(req.maxNodes ?? 500, 1), 2000);
     const revision = await this.revision();
@@ -417,7 +640,8 @@ export class RepoSession implements ReinsApi {
       ]);
       const a = normalizeCallers(incoming, base);
       const b = normalizeCallers(outgoing, base);
-      return mergeSlices(a, b, maxNodes);
+      const merged = mergeSlices(a, b, maxNodes);
+      return resolved.surface ? this.withInjected(merged, resolved.surface, maxNodes) : merged;
     }
     const result = await this.trail.callers({
       symbol,
@@ -425,7 +649,8 @@ export class RepoSession implements ReinsApi {
       depth,
       ...(req.pathPrefix ? { pathPrefix: req.pathPrefix } : {}),
     });
-    return normalizeCallers(result, base);
+    const slice = normalizeCallers(result, base);
+    return resolved.surface ? this.withInjected(slice, resolved.surface, maxNodes) : slice;
   }
 
   private async existingFile(base: string): Promise<string | null> {
@@ -732,11 +957,12 @@ export class RepoSession implements ReinsApi {
   async flow(req: FlowRequest): Promise<GraphSlice> {
     const target = req.target.trim();
     let symbolId: string | null = null;
+    let surface: Surface | undefined;
     if (target.includes("#")) {
       symbolId = target;
     } else {
       const page = await this.listSurfaces({ limit: 5000 });
-      const surface = page.items.find(
+      surface = page.items.find(
         (item) =>
           item.id === target ||
           (item.route && `${item.method ?? ""} ${item.route}`.trim() === target) ||
@@ -756,12 +982,13 @@ export class RepoSession implements ReinsApi {
       throw new ReinsError("SURFACE_NOT_FOUND", `No surface or symbol matched "${target}".`);
     }
     const maxNodes = Math.min(Math.max(req.maxNodes ?? 500, 1), 2000);
-    const slice = await this.graph({
+    let slice = await this.graph({
       root: { symbolId },
       direction: req.direction ?? "out",
       depth: req.depth ?? 3,
       maxNodes,
     });
+    if (surface) slice = await this.withInjected(slice, surface, maxNodes);
     if (slice.nodes.length > 1 || !slice.root || slice.direction === "in") return slice;
     // Trail has no call edges for many UI components. Fall back to the imports of the
     // entry file so the flow still shows the files the entry point depends on.

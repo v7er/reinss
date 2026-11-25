@@ -10,9 +10,9 @@ context: |
 
   Constraints:
   - Trail's graft/ is the only code graph. Never copy it into another store.
-  - ReinsApi in @reins/core is the only operation surface.
-  - @reins/core imports no node:*, Tauri, React, or filesystem module.
-  - @reins/ui imports no @reins/node, Tauri, or node:*.
+  - ReinsApi in @reinss/core is the only operation surface.
+  - @reinss/core imports no node:*, Tauri, React, or filesystem module.
+  - @reinss/ui imports no @reinss/node, Tauri, or node:*.
   - No network by default. No repository code execution.
   - No new dependency without a row in RULES.md.
   - OpenSpec under openspec/ is read-only. Reins never writes to it.

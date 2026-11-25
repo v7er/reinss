@@ -155,6 +155,49 @@ describe("scanSurfaces", () => {
     );
   });
 
+  it("links x-source-file to a class method or a function", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "reins-openapi-symbol-"));
+    await fs.mkdir(path.join(root, "src"), { recursive: true });
+    await fs.writeFile(path.join(root, "src/jobs.ts"), "export class JobsController {}\n");
+    await fs.writeFile(path.join(root, "src/health.ts"), "export function health() {}\n");
+    await fs.writeFile(
+      path.join(root, "openapi.json"),
+      JSON.stringify({
+        openapi: "3.0.3",
+        paths: {
+          "/jobs": {
+            get: {
+              operationId: "listJobs",
+              "x-source-file": "src/jobs.ts@JobsController:listJobs",
+            },
+          },
+          "/health": {
+            get: { operationId: "health", "x-source-file": "src/health.ts@health" },
+          },
+          "/jobs/class": {
+            get: { operationId: "jobsClass", "x-source-file": "src/jobs.ts@JobsController" },
+          },
+        },
+      }),
+    );
+
+    const result = await scanSurfaces(root);
+    const openapi = result.surfaces.filter((surface) => surface.framework === "openapi");
+    const jobs = openapi.find((surface) => surface.route === "/jobs");
+    expect(jobs?.file).toBe("src/jobs.ts");
+    expect(jobs?.symbolName).toBe("listJobs");
+    expect(jobs?.symbolId).toBe("src/jobs.ts#JobsController.listJobs");
+    expect(jobs?.metadata.sourceSymbol).toBe("JobsController:listJobs");
+
+    const health = openapi.find((surface) => surface.route === "/health");
+    expect(health?.symbolId).toBe("src/health.ts#health");
+    expect(health?.metadata.sourceSymbol).toBe("health");
+
+    const controller = openapi.find((surface) => surface.route === "/jobs/class");
+    expect(controller?.symbolId).toBe("src/jobs.ts#JobsController");
+    expect(controller?.metadata.sourceSymbol).toBe("JobsController");
+  });
+
   it("resolves x-source-file from the nearest ancestor that has the file", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "reins-openapi-cmdroot-"));
     await fs.mkdir(path.join(root, "apps/web/src/admin/spaces"), { recursive: true });

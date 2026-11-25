@@ -10,7 +10,7 @@ import {
   TextInput,
   UnstyledButton,
 } from "@mantine/core";
-import type { DiffRange, FileDiff, SemanticChange, SemanticDiff } from "@reins/core";
+import type { DiffRange, FileDiff, SemanticChange, SemanticDiff } from "@reinss/core";
 import {
   IconCopy,
   IconFileMinus,
@@ -28,6 +28,7 @@ export interface DiffViewerProps {
   range: DiffRange;
   height?: number;
   files?: string[];
+  fill?: boolean;
 }
 
 function operationLabel(change: SemanticChange): string {
@@ -98,7 +99,7 @@ function FileStatusIcon({ status }: { status: FileDiff["status"] }) {
   }
 }
 
-export function DiffViewer({ range, height = 560, files }: DiffViewerProps) {
+export function DiffViewer({ range, height = 560, files, fill = false }: DiffViewerProps) {
   const { client } = useReins();
   const mainRange: DiffRange = range.mode === "working" ? { mode: "unstaged" } : range;
   const fileFilter = files && files.length > 0 ? { files } : {};
@@ -233,7 +234,7 @@ export function DiffViewer({ range, height = 560, files }: DiffViewerProps) {
           leftSection={<IconSearch size={14} />}
           mb="xs"
         />
-        <ScrollArea mah={520} type="auto">
+        <ScrollArea mah={fill ? Math.max(240, height - 100) : 520} type="auto">
           <Stack gap="md">
             {visibleSections.map((section) => (
               <Stack gap={2} key={section.id}>
@@ -262,7 +263,7 @@ export function DiffViewer({ range, height = 560, files }: DiffViewerProps) {
                         setSelectedChange(null);
                       }}
                     >
-                      <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                      <Group gap="xs" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
                         <FileStatusIcon status={item.status} />
                         <span className="reins-diff-path">{item.path}</span>
                       </Group>
@@ -297,22 +298,22 @@ export function DiffViewer({ range, height = 560, files }: DiffViewerProps) {
       </div>
       <div className="reins-diff-main">
         {file ? (
-          <Stack gap="sm">
-            <Group justify="space-between">
-              <Text fw={600} size="sm">
+          <Stack gap="xs">
+            <Group justify="space-between" gap="xs" wrap="nowrap">
+              <Text fw={600} size="xs" ff="monospace" truncate style={{ minWidth: 0 }}>
                 {file.path}
               </Text>
-              <Group gap="xs">
+              <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
                 <Badge size="xs" variant="light" color="gray">
                   {file.status}
                 </Badge>
-                <Text size="xs" c="dimmed">
+                <Text size="xs" c="dimmed" truncate>
                   {file.language}
                   {file.degraded ? ` · degraded: ${file.degradedReason}` : ""}
                 </Text>
               </Group>
             </Group>
-            <ScrollArea mah={180} type="auto">
+            <ScrollArea mah={140} type="auto">
               <Stack gap={0}>
                 {file.changes.map((item) => (
                   <UnstyledButton
@@ -321,7 +322,7 @@ export function DiffViewer({ range, height = 560, files }: DiffViewerProps) {
                     onClick={() => setSelectedChange(item.id)}
                   >
                     <span className={`reins-op-kind kind-${item.kind}`}>{item.kind}</span>
-                    <span>{operationLabel(item)}</span>
+                    <span className="reins-op-label">{operationLabel(item)}</span>
                     <span className="reins-row-meta">
                       {item.to?.path ?? item.from?.path}:
                       {item.to?.startLine ?? item.from?.startLine}
@@ -331,8 +332,8 @@ export function DiffViewer({ range, height = 560, files }: DiffViewerProps) {
               </Stack>
             </ScrollArea>
             {change ? (
-              <Paper withBorder radius="lg" p="sm">
-                <Group gap="lg" wrap="wrap">
+              <Paper withBorder radius="lg" p="xs">
+                <Group gap="md" wrap="wrap">
                   <Text size="xs" c="dimmed">
                     before{" "}
                     <Text span size="xs" ff="monospace">
@@ -367,7 +368,7 @@ export function DiffViewer({ range, height = 560, files }: DiffViewerProps) {
               hunks={hunks}
               degraded={file.degraded}
               degradedReason={file.degradedReason}
-              height="70vh"
+              height={fill ? `${Math.max(200, height - 240)}px` : "70vh"}
             />
           </Stack>
         ) : (

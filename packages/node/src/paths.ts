@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { ReinsError } from "@reins/core";
+import { ReinsError } from "@reinss/core";
 
 export function resolveWithinRoot(root: string, relative: string): string {
   if (path.isAbsolute(relative)) {

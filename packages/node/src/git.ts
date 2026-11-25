@@ -2,12 +2,17 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
   type DiffRange,
+  type GitBranch,
+  type GitBranches,
   type GitCommit,
   type GitCommitResult,
   type GitFileStatus,
+  type GitGraphCommit,
   type GitStatus,
+  type GitTag,
+  type GitWorktree,
   ReinsError,
-} from "@reins/core";
+} from "@reinss/core";
 import { resolveWithinRoot } from "./paths.js";
 import { runProcess } from "./process.js";
 
@@ -340,6 +345,262 @@ export class GitAdapter {
       });
     }
     return commits;
+  }
+
+  async graph(limit = 200): Promise<GitGraphCommit[]> {
+    const count = Math.min(Math.max(limit, 1), 1000);
+    const out = await this.git([
+      "log",
+      "--branches",
+      "--tags",
+      "--remotes",
+      "--topo-order",
+      `-n${count}`,
+      "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%P%x1f%D",
+    ]).catch(() => "");
+    const commits: GitGraphCommit[] = [];
+    for (const line of out.split("\n")) {
+      if (!line.trim()) continue;
+      const [hash, shortHash, author, email, date, subject, parents, refs] = line.split("\x1f");
+      if (!hash) continue;
+      const refNames: string[] = [];
+      for (const raw of (refs ?? "").split(", ")) {
+        const ref = raw.trim();
+        if (!ref || ref.endsWith("/HEAD")) continue;
+        if (ref.startsWith("HEAD -> ")) {
+          refNames.push("HEAD", ref.slice(8));
+        } else {
+          refNames.push(ref);
+        }
+      }
+      commits.push({
+        hash,
+        shortHash: shortHash ?? hash.slice(0, 7),
+        parents: (parents ?? "").split(" ").filter(Boolean),
+        author: author ?? "",
+        email: email ?? "",
+        date: date ?? "",
+        subject: subject ?? "",
+        refs: refNames,
+      });
+    }
+    return commits;
+  }
+
+  async branches(): Promise<GitBranches> {
+    const out = await this.git([
+      "for-each-ref",
+      "--format=%(refname)%1f%(refname:short)%1f%(HEAD)%1f%(upstream:short)%1f%(upstream:track)%1f%(objectname:short)%1f%(subject)",
+      "refs/heads",
+      "refs/remotes",
+    ]);
+    const local: GitBranch[] = [];
+    const remote: GitBranch[] = [];
+    for (const line of out.split("\n")) {
+      if (!line.trim()) continue;
+      const [full, short, head, upstream, track, hash, subject] = line.split("\x1f");
+      if (!full || !short) continue;
+      if (full.startsWith("refs/remotes/") && full.endsWith("/HEAD")) continue;
+      const isRemote = full.startsWith("refs/remotes/");
+      const branch: GitBranch = {
+        name: short,
+        remote: isRemote,
+        current: head === "*",
+        upstream: upstream || null,
+        ahead: Number(/ahead (\d+)/.exec(track ?? "")?.[1] ?? 0),
+        behind: Number(/behind (\d+)/.exec(track ?? "")?.[1] ?? 0),
+        head: hash || null,
+        subject: subject || null,
+      };
+      (isRemote ? remote : local).push(branch);
+    }
+    local.sort((a, b) => Number(b.current) - Number(a.current) || a.name.localeCompare(b.name));
+    remote.sort((a, b) => a.name.localeCompare(b.name));
+    return { current: local.find((branch) => branch.current)?.name ?? null, local, remote };
+  }
+
+  async checkoutBranch(name: string, remote = false): Promise<GitStatus> {
+    await this.assertRef(name, "branch");
+    if (remote) {
+      const localName = name.split("/").slice(1).join("/") || name;
+      const exists = await this.git(["show-ref", "--verify", "--quiet", `refs/heads/${localName}`])
+        .then(() => true)
+        .catch(() => false);
+      await this.git(exists ? ["checkout", localName] : ["checkout", "--track", name]);
+    } else {
+      await this.git(["checkout", name]);
+    }
+    return this.status();
+  }
+
+  async createBranch(name: string, startPoint?: string, checkout = false): Promise<GitStatus> {
+    await this.assertRef(name, "branch");
+    if (startPoint) this.assertRevision(startPoint);
+    if (checkout) {
+      await this.git(["checkout", "-b", name, ...(startPoint ? [startPoint] : [])]);
+    } else {
+      await this.git(["branch", name, ...(startPoint ? [startPoint] : [])]);
+    }
+    return this.status();
+  }
+
+  async deleteBranch(name: string, force = false): Promise<GitStatus> {
+    await this.assertRef(name, "branch");
+    await this.git(["branch", force ? "-D" : "-d", name]);
+    return this.status();
+  }
+
+  async tags(): Promise<GitTag[]> {
+    const out = await this.git([
+      "for-each-ref",
+      "--sort=-creatordate",
+      "--format=%(refname:short)%1f%(objecttype)%1f%(objectname)%1f%(objectname:short)%1f%(subject)%1f%(creatordate:iso-strict)",
+      "refs/tags",
+    ]);
+    const tags: GitTag[] = [];
+    for (const line of out.split("\n")) {
+      if (!line.trim()) continue;
+      const [name, objectType, hash, shortHash, subject, date] = line.split("\x1f");
+      if (!name || !hash) continue;
+      tags.push({
+        name,
+        hash,
+        shortHash: shortHash ?? hash.slice(0, 7),
+        subject: subject ?? "",
+        date: date ?? "",
+        annotated: objectType === "tag",
+      });
+    }
+    return tags;
+  }
+
+  async createTag(input: { name: string; ref?: string; message?: string }): Promise<GitTag[]> {
+    await this.assertRef(input.name, "tag");
+    if (input.ref) this.assertRevision(input.ref);
+    const args = ["tag"];
+    if (input.message?.trim()) args.push("-a", input.name, "-m", input.message.trim());
+    else args.push(input.name);
+    if (input.ref) args.push(input.ref);
+    await this.git(args);
+    return this.tags();
+  }
+
+  async deleteTag(name: string): Promise<GitTag[]> {
+    await this.assertRef(name, "tag");
+    await this.git(["tag", "-d", name]);
+    return this.tags();
+  }
+
+  async worktrees(): Promise<GitWorktree[]> {
+    const out = await this.git(["worktree", "list", "--porcelain"]);
+    const currentRoot = await fs.realpath(this.root).catch(() => path.resolve(this.root));
+    const worktrees: GitWorktree[] = [];
+    for (const block of out.split("\n\n")) {
+      if (!block.trim()) continue;
+      const entry: GitWorktree = {
+        path: "",
+        head: null,
+        branch: null,
+        bare: false,
+        detached: false,
+        locked: false,
+        prunable: false,
+        current: false,
+      };
+      for (const line of block.split("\n")) {
+        if (line.startsWith("worktree ")) entry.path = line.slice(9);
+        else if (line.startsWith("HEAD ")) entry.head = line.slice(5);
+        else if (line.startsWith("branch ")) {
+          entry.branch = line.slice(7).replace(/^refs\/heads\//, "");
+        } else if (line === "bare") entry.bare = true;
+        else if (line === "detached") entry.detached = true;
+        else if (line.startsWith("locked")) entry.locked = true;
+        else if (line.startsWith("prunable")) entry.prunable = true;
+      }
+      if (!entry.path) continue;
+      entry.path = await fs.realpath(entry.path).catch(() => path.resolve(entry.path));
+      entry.current = entry.path === currentRoot;
+      worktrees.push(entry);
+    }
+    return worktrees;
+  }
+
+  async addWorktree(input: {
+    path: string;
+    branch?: string;
+    createBranch?: boolean;
+    startPoint?: string;
+    detach?: boolean;
+  }): Promise<GitWorktree[]> {
+    if (!input.path.trim()) {
+      throw new ReinsError("GIT_WORKTREE_PATH", "A worktree path is required.");
+    }
+    const target = path.resolve(input.path);
+    if (input.createBranch) {
+      if (!input.branch) {
+        throw new ReinsError("GIT_REF_INVALID", "A branch name is required for a new worktree.");
+      }
+      await this.assertRef(input.branch, "branch");
+    } else if (input.branch) {
+      await this.assertRef(input.branch, "branch");
+    }
+    if (input.startPoint) this.assertRevision(input.startPoint);
+    const args = ["worktree", "add"];
+    if (input.createBranch) args.push("-b", input.branch ?? "");
+    else if (input.detach) args.push("--detach");
+    args.push(target);
+    if (input.createBranch) {
+      if (input.startPoint) args.push(input.startPoint);
+    } else if (input.branch) {
+      args.push(input.branch);
+    }
+    await this.git(args);
+    return this.worktrees();
+  }
+
+  async removeWorktree(target: string, force = false): Promise<GitWorktree[]> {
+    const resolved = path.resolve(target);
+    if (resolved === path.resolve(this.root)) {
+      throw new ReinsError("GIT_WORKTREE_CURRENT", "Cannot remove the current worktree.");
+    }
+    const args = ["worktree", "remove"];
+    if (force) args.push("--force");
+    args.push(resolved);
+    await this.git(args);
+    return this.worktrees();
+  }
+
+  private async assertRef(name: string, kind: "branch" | "tag"): Promise<void> {
+    const value = name.trim();
+    if (
+      !value ||
+      value.startsWith("-") ||
+      /[\0-\x20~^:?*[\\]/.test(value) ||
+      value.includes("..") ||
+      value.endsWith("/") ||
+      value.endsWith(".lock") ||
+      value.includes("@{")
+    ) {
+      throw new ReinsError("GIT_REF_INVALID", `Invalid ${kind} name: ${name}`);
+    }
+    const ref = kind === "branch" ? value : `refs/tags/${value}`;
+    const result = await runProcess({
+      command: "git",
+      args: kind === "branch" ? ["check-ref-format", "--branch", ref] : ["check-ref-format", ref],
+      cwd: this.root,
+      timeoutMs: 5_000,
+      env: { GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
+    });
+    if (result.code !== 0) {
+      throw new ReinsError("GIT_REF_INVALID", `Invalid ${kind} name: ${name}`);
+    }
+  }
+
+  private assertRevision(value: string): void {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.startsWith("-") || /[\0-\x20]/.test(trimmed)) {
+      throw new ReinsError("GIT_REF_INVALID", `Invalid revision: ${value}`);
+    }
   }
 
   private async tryHead(): Promise<string | null> {

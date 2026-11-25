@@ -1,5 +1,5 @@
 {
-  "name": "reins-workspace",
+  "name": "reinss-workspace",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,15 +9,17 @@
   },
   "scripts": {
     "build": "pnpm -r build",
-    "dev": "pnpm --filter @reins/desktop dev",
+    "dev": "pnpm --filter @reinss/desktop dev",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "cli": "node apps/cli/dist/main.js",
     "lint": "biome check .",
-    "reins": "node apps/cli/dist/main.js",
-    "reins:npx": "npx --yes --package ./apps/cli reins",
-    "release": "pnpm -r publish --access public",
+    "reinss": "node apps/cli/dist/main.js",
+    "reinss:npx": "npx --yes --package ./apps/cli reinss",
+    "bump": "pnpm -r --filter '!@reinss/desktop' --filter '!@reinss/ui' exec npm version patch --no-git-tag-version",
+    "publish:all": "pnpm -r publish --access public",
+    "release": "pnpm run bump && pnpm run publish:all",
     "release:dry": "pnpm -r publish --access public --dry-run"
   },
   "devDependencies": {
@@ -28,6 +30,6 @@
     "vitest": "^3.2.4"
   },
   "bin": {
-    "reins": "./bin/reins"
+    "reinss": "./bin/reinss"
   }
 }

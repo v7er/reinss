@@ -11,14 +11,14 @@ import {
   type RefreshOptions,
   type SearchOptions,
   type SurfaceFilter,
-} from "@reins/core";
+} from "@reinss/core";
 import {
   createSession,
   type RepoSession,
   type RepoWatcher,
   realRoot,
   watchRepo,
-} from "@reins/node";
+} from "@reinss/node";
 
 interface Request {
   id: number;
@@ -84,6 +84,38 @@ async function handle(request: Request): Promise<unknown> {
       return session.gitCommit(params as { message: string; amend?: boolean; signoff?: boolean });
     case "gitLog":
       return session.gitLog((params ?? {}) as { limit?: number; path?: string });
+    case "gitGraph":
+      return session.gitGraph((params ?? {}) as { limit?: number });
+    case "gitBranches":
+      return session.gitBranches();
+    case "gitCheckoutBranch":
+      return session.gitCheckoutBranch(params as { name: string; remote?: boolean });
+    case "gitCreateBranch":
+      return session.gitCreateBranch(
+        params as { name: string; startPoint?: string; checkout?: boolean },
+      );
+    case "gitDeleteBranch":
+      return session.gitDeleteBranch(params as { name: string; force?: boolean });
+    case "gitTags":
+      return session.gitTags();
+    case "gitCreateTag":
+      return session.gitCreateTag(params as { name: string; ref?: string; message?: string });
+    case "gitDeleteTag":
+      return session.gitDeleteTag(params as { name: string });
+    case "gitWorktrees":
+      return session.gitWorktrees();
+    case "gitAddWorktree":
+      return session.gitAddWorktree(
+        params as {
+          path: string;
+          branch?: string;
+          createBranch?: boolean;
+          startPoint?: string;
+          detach?: boolean;
+        },
+      );
+    case "gitRemoveWorktree":
+      return session.gitRemoveWorktree(params as { path: string; force?: boolean });
     case "searchSymbols": {
       const input = (params ?? {}) as { query: string } & SearchOptions;
       return session.searchSymbols(input.query, {

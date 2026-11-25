@@ -13,7 +13,7 @@ import {
   noteFrontmatterSchema,
   noteIdFromTitle,
   ReinsError,
-} from "@reins/core";
+} from "@reinss/core";
 import { createTwoFilesPatch } from "diff";
 import fg from "fast-glob";
 import matter from "gray-matter";

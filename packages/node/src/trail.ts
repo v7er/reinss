@@ -1,4 +1,4 @@
-import { ReinsError } from "@reins/core";
+import { ReinsError } from "@reinss/core";
 import { z } from "zod";
 import { runProcess } from "./process.js";
 

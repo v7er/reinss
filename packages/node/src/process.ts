@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { ReinsError } from "@reins/core";
+import { ReinsError } from "@reinss/core";
 
 export interface ProcessSpec {
   command: string;

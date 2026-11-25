@@ -64,7 +64,7 @@ A skill file has YAML frontmatter with `name` and `description`, then:
 | `reins-diff-review` | 3 | Reviewing a structural change or an agent's edit. | Operation summary, risks, and comments linked to operations. |
 | `openspec-init` | any | A new project needs an OpenSpec knowledge base. | `openspec/` with config, first spec, and first change. |
 
-Three exist now: `reins-context` (runs against Trail until `reins` exists), `reins-decision`, and `openspec-init`. The other two are written at the start of their phase, not before.
+Three exist now: `reins-context` (runs against Trail until `reinss` exists), `reins-decision`, and `openspec-init`. The other two are written at the start of their phase, not before.
 
 ### 3.2 `reins-context`
 
@@ -119,6 +119,10 @@ Failure modes: writing a note that restates the code instead of the reason; link
 | `reins_surfaces` | yes | no | yes | no |
 | `reins_flow` | yes | no | yes | no |
 | `reins_diff` | yes | no | yes | no |
+| `reins_git_graph` | yes | no | yes | no |
+| `reins_git_branches` | yes | no | yes | no |
+| `reins_git_tags` | yes | no | yes | no |
+| `reins_git_worktrees` | yes | no | yes | no |
 | `reins_knowledge_search` | yes | no | yes | no |
 | `reins_knowledge_get` | yes | no | yes | no |
 | `reins_knowledge_propose` | no | no, writes one file under inbox | no | no |

@@ -10,7 +10,7 @@ The package whitelist and the performance rules for Reins. Read this before addi
 | Specs | [Fission-AI/OpenSpec](https://github.com/Fission-AI/OpenSpec) | Read `openspec/config.yaml`, `openspec/project.md`, `openspec/specs/**/spec.md`, and `openspec/changes/**/{proposal,design,tasks,spec}.md` as read-only knowledge notes. Do not copy OpenSpec templates into this repo. |
 | Review UI | React, embeddable | Every view is a React component with an injected `ReinsClient`. The review workspace is a component, not a page. |
 | Desktop | Tauri | Rust shell, system webview, and one Node sidecar over stdio. The sidecar is the same `RepoSession` used by the CLI and MCP. |
-| Graph canvas | `@xyflow/react` + `dagre` | Do not write a graph renderer. |
+| Graph canvas | `@xyflow/react` + `dagre` | Code graph uses React Flow. The Git history tree is a separate Canvas + D3 component. |
 | Code view | CodeMirror 6 | Do not write a syntax highlighter. |
 | Command palette | `@mantine/spotlight` | Do not write a fuzzy list. |
 | Markdown | `react-markdown` + `remark-gfm` | Do not write a markdown renderer. |
@@ -31,8 +31,9 @@ The package whitelist and the performance rules for Reins. Read this before addi
 | `@tauri-apps/api` | desktop | Tauri invoke bridge. |
 | `@tauri-apps/plugin-dialog` | desktop | Native folder picker. |
 | `react`, `react-dom` | ui, desktop | UI runtime. |
-| `@xyflow/react` | ui | Graph canvas. |
-| `dagre` | ui | Deterministic graph layout. |
+| `@xyflow/react` | ui | Code graph canvas. |
+| `dagre` | ui | Deterministic code graph layout. |
+| `d3-selection`, `d3-zoom` | ui | Pan and zoom for the Canvas Git tree. |
 | `@mantine/core` | ui, desktop | Components, theme, layout primitives. |
 | `@mantine/hooks` | ui, desktop | Hotkeys and small UI hooks. |
 | `@mantine/spotlight` | desktop | `Cmd+K` command palette. |
@@ -67,7 +68,7 @@ The package whitelist and the performance rules for Reins. Read this before addi
 | `minisearch`, Fuse, Lunr | Linear scan over notes is enough at the stated scale. |
 | ESLint, Prettier, turbo | Biome and `pnpm -r` cover the need. |
 | `execa` | `node:child_process.spawn` with an argument array is the requirement. |
-| A custom parser, graph renderer, diff algorithm, or markdown renderer | Use the listed package. |
+| A custom parser, code graph renderer, diff algorithm, or markdown renderer | Use the listed package. The Git tree is the one Canvas + D3 exception. |
 
 Adding a package requires a row in this file, a catalog entry, and a reason in the pull request. Removing a package is always allowed.
 
@@ -127,8 +128,8 @@ The desktop must open a repository without reading it.
 
 ## 4. UI rules
 
-- Every major view is a component in `@reins/ui` with a `ReinsClient`.
-- No `node:*`, Tauri, or filesystem import in `@reins/ui`.
+- Every major view is a component in `@reinss/ui` with a `ReinsClient`.
+- No `node:*`, Tauri, or filesystem import in `@reinss/ui`.
 - The desktop shell owns the window, the repository dialog, and editor reveal. The components own the views.
 - `Cmd+K` is the only navigation. The Mantine Spotlight palette lists tools, recent tools, and repository actions.
 - No top bar. The center area shows one tool at a time. No permanent sidebar.

@@ -1,5 +1,5 @@
 {
-  "name": "@reins/node",
+  "name": "@reinss/node",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,13 +20,13 @@
     "@babel/traverse": "^8.1.2",
     "@babel/types": "^8.1.2",
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "@reins/core": "workspace:*",
+    "@reinss/core": "workspace:*",
     "diff": "^9.0.0",
     "fast-glob": "^3.3.3",
     "gray-matter": "^4.0.3",
     "zod": "^4.6.7"
   },
-  "description": "Node adapters, Trail and Git integration, surface scanners, semantic diff, and knowledge loader for Reins.",
+  "description": "Node adapters, Trail and Git integration, surface scanners, semantic diff, and knowledge loader for Reinss.",
   "license": "MIT",
   "files": [
     "dist"

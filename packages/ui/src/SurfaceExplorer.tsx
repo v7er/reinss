@@ -12,7 +12,7 @@ import {
   TextInput,
   UnstyledButton,
 } from "@mantine/core";
-import type { Component, Surface, SurfacePage } from "@reins/core";
+import type { Component, Surface, SurfacePage } from "@reinss/core";
 import { IconSearch } from "@tabler/icons-react";
 import { useMemo, useState } from "react";
 import { useReins } from "./context.js";

@@ -51,7 +51,7 @@ fn serve_script() -> Result<PathBuf, String> {
         }
     }
     Err(format!(
-        "apps/cli/dist/serve.js not found. Run `pnpm --filter reins build` from the repository root. Checked: {}",
+        "apps/cli/dist/serve.js not found. Run `pnpm --filter @reinss/cli build` from the repository root. Checked: {}",
         manifest.display()
     ))
 }

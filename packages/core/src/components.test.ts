@@ -32,7 +32,7 @@ describe("componentKindFromPath", () => {
   });
 
   it("uses the package name when the path is generic", () => {
-    expect(componentKindFromPath("apps/desktop @reins/desktop")).toBe("webapp");
+    expect(componentKindFromPath("apps/desktop @reinss/desktop")).toBe("webapp");
     expect(componentKindFromPath("services/billing")).toBe("service");
   });
 

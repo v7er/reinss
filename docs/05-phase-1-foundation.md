@@ -35,7 +35,7 @@ If a task does not serve the vertical slice or the quality gates, it waits.
 The phase is done when all of these are true.
 
 - [ ] Clean clone: `pnpm install --frozen-lockfile && pnpm check` passes.
-- [ ] `pnpm --filter @reins/desktop build` succeeds and the smoke test launches the app.
+- [ ] `pnpm --filter @reinss/desktop build` succeeds and the smoke test launches the app.
 - [ ] `reins init` creates `.reins/config.json`, `.reins/.gitignore`, and the empty knowledge folders, and refuses to overwrite an existing config.
 - [ ] Opening `test/fixtures/graph-basic` reports `state: ready`, `inSync: true`, and the expected node count.
 - [ ] Searching `total` returns the symbol with path and line.
@@ -156,7 +156,7 @@ Version policy:
 | `zod` | core | One validation library for config, Trail JSON, API params, and sidecar input. |
 | `commander` | cli | Argument parsing. Do not hand-roll subcommands. |
 | `@modelcontextprotocol/sdk` | cli | MCP stdio server. |
-| `react`, `react-dom` | ui, desktop | UI runtime. Peer dependencies of `@reins/ui`. |
+| `react`, `react-dom` | ui, desktop | UI runtime. Peer dependencies of `@reinss/ui`. |
 | `@xyflow/react` | ui | Graph canvas. |
 | `dagre` | ui | Deterministic layout for small and medium graphs. |
 | `@tauri-apps/api`, `@tauri-apps/plugin-dialog` | desktop | Tauri invoke and native folder dialog. |
@@ -179,7 +179,7 @@ Deferred, not rejected:
 
 ## 7. Package contracts
 
-### 7.1 `@reins/core`
+### 7.1 `@reinss/core`
 
 Exports only what transports and UI need:
 
@@ -203,7 +203,7 @@ Rules:
 - Every public function has one test with a fixture and one edge-case test.
 - `any` is forbidden in public types. Use `unknown` at boundaries and parse.
 
-### 7.2 `@reins/node`
+### 7.2 `@reinss/node`
 
 Exports:
 
@@ -232,7 +232,7 @@ It owns the adapters, the process cache, and the current fingerprint. It does no
 
 `createSession({ root, env?, now?, trailBinary?, gitBinary? })` accepts injected dependencies for tests. No singleton, no module-level mutable state.
 
-### 7.3 `@reins/ui`
+### 7.3 `@reinss/ui`
 
 Exports:
 
@@ -245,9 +245,9 @@ export type { ReinsClient, NavigationTarget } from './client';
 
 Rules:
 
-- `@reins/ui` declares `react` and `react-dom` as peer dependencies, not bundled.
+- `@reinss/ui` declares `react` and `react-dom` as peer dependencies, not bundled.
 - The built package ships ESM only plus the token stylesheet. Phase 5 adds the custom element build.
-- Components never import `@reins/node` or `@reins/core` values beyond types and error guards. If a component needs a rule, it gets it from the client response.
+- Components never import `@reinss/node` or `@reinss/core` values beyond types and error guards. If a component needs a rule, it gets it from the client response.
 - A component that cannot render without a repository renders an explicit empty state.
 
 ## 8. API for Phase 1
@@ -509,7 +509,7 @@ Root scripts:
     "boundaries": "node --experimental-strip-types scripts/check-boundaries.ts",
     "budget": "node --experimental-strip-types scripts/check-budget.ts",
     "test:unit": "vitest run",
-    "test:e2e": "pnpm --filter @reins/desktop smoke",
+    "test:e2e": "pnpm --filter @reinss/desktop smoke",
     "bench": "node --experimental-strip-types scripts/bench/graph.ts"
   }
 }

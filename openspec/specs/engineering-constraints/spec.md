@@ -18,7 +18,7 @@ The system SHALL use Trail's `graft/` as the only code graph and SHALL NOT copy 
 
 ### Requirement: Keep one API
 
-The system SHALL expose `ReinsApi` in `@reins/core` as the only operation surface and SHALL keep CLI, Tauri, and MCP as thin adapters.
+The system SHALL expose `ReinsApi` in `@reinss/core` as the only operation surface and SHALL keep CLI, Tauri, and MCP as thin adapters.
 
 #### Scenario: Adding an operation
 
@@ -28,7 +28,7 @@ The system SHALL expose `ReinsApi` in `@reins/core` as the only operation surfac
 
 ### Requirement: Keep core pure
 
-The system SHALL keep `@reins/core` free of `node:*`, Tauri, React, and filesystem imports.
+The system SHALL keep `@reinss/core` free of `node:*`, Tauri, React, and filesystem imports.
 
 #### Scenario: Importing a Node module in core
 
@@ -38,7 +38,7 @@ The system SHALL keep `@reins/core` free of `node:*`, Tauri, React, and filesyst
 
 ### Requirement: Keep Node out of the UI
 
-The system SHALL keep `@reins/ui` free of `@reins/node`, Tauri, and `node:*` imports.
+The system SHALL keep `@reinss/ui` free of `@reinss/node`, Tauri, and `node:*` imports.
 
 #### Scenario: Importing a Node adapter in the UI
 

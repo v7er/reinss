@@ -92,7 +92,7 @@ No human-readable output is parsed. If a needed value is not in the JSON, the op
 
 ### 3.3 Adapter result types
 
-The adapter maps Trail's JSON into these shapes before normalization. They are internal to `@reins/node` but documented so tests and fixtures agree.
+The adapter maps Trail's JSON into these shapes before normalization. They are internal to `@reinss/node` but documented so tests and fixtures agree.
 
 ```ts
 interface TrailStatus {
@@ -476,6 +476,54 @@ interface GitCommitResult {
   subject: string;
   status: GitStatus;
 }
+
+interface GitBranch {
+  name: string;
+  remote: boolean;
+  current: boolean;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  head: string | null;
+  subject: string | null;
+}
+
+interface GitBranches {
+  current: string | null;
+  local: GitBranch[];
+  remote: GitBranch[];
+}
+
+interface GitTag {
+  name: string;
+  hash: string;
+  shortHash: string;
+  subject: string;
+  date: string;
+  annotated: boolean;
+}
+
+interface GitWorktree {
+  path: string;
+  head: string | null;
+  branch: string | null;
+  bare: boolean;
+  detached: boolean;
+  locked: boolean;
+  prunable: boolean;
+  current: boolean;
+}
+
+interface GitGraphCommit {
+  hash: string;
+  shortHash: string;
+  parents: string[];
+  author: string;
+  email: string;
+  date: string;
+  subject: string;
+  refs: string[];
+}
 ```
 
 Rules:
@@ -486,6 +534,17 @@ Rules:
 - `gitDiscard` requires `confirm: true` and fails with `GIT_CONFIRM_REQUIRED` otherwise.
 - `gitCommit` requires a non-empty message and fails with `GIT_COMMIT_EMPTY` otherwise. It supports `amend` and `signoff`.
 - `gitLog` returns at most 200 commits, newest first, and accepts an optional file path.
+- `gitGraph` returns at most 1,000 commits across local branches, remote branches, and tags, newest first in topological order. `parents` is the full parent list, so merge commits have two or more entries. `refs` carries branch, remote, tag, and `HEAD` labels.
+- `gitBranches` reads `refs/heads` and `refs/remotes`, skips `*/HEAD`, and parses `%(upstream:track)` for ahead and behind counts.
+- `gitCheckoutBranch` checks out a local branch. With `remote: true`, it creates a local tracking branch when one does not exist.
+- `gitCreateBranch` validates the name with `git check-ref-format --branch`, accepts an optional start point, and can check out the new branch.
+- `gitDeleteBranch` uses `git branch -d`, or `-D` when `force` is true. Git refuses to delete the current branch.
+- `gitTags` reads `refs/tags` with `for-each-ref`. `annotated` is true when the ref points at a tag object.
+- `gitCreateTag` creates a lightweight tag, or an annotated tag when `message` is present.
+- `gitWorktrees` reads `git worktree list --porcelain` and resolves paths to real paths. `current` marks the repository root.
+- `gitAddWorktree` requires an absolute path. `createBranch` requires a branch name and uses `git worktree add -b`. Without a branch it detaches at `HEAD`.
+- `gitRemoveWorktree` refuses to remove the current worktree with `GIT_WORKTREE_CURRENT`.
+- Invalid ref names fail with `GIT_REF_INVALID`. A missing worktree path fails with `GIT_WORKTREE_PATH`.
 
 ## 5. Surfaces
 
@@ -645,7 +704,7 @@ Initial supported matrix:
 | 2 | `next-app` | TSX, JSX | `app/**/page.tsx`, `app/**/route.ts` exports |
 | 2 | `react-router` | TSX, JSX | `createBrowserRouter` route objects, `<Route path>` |
 | 2 | `fastapi` | Python | `@app.get`, `@router.post` |
-| 2 | `openapi` | JSON | `openapi.json` and `swagger.json` paths and methods, deduplicated against code routes; `x-source-file` (operation, path, or document level) links a surface to its handler file, resolved from the spec folder or its nearest ancestor that contains the file. A surface without it is marked `linkReason: missing-x-source-file` and flow refuses to trace it with `SURFACE_UNTRACEABLE` |
+| 2 | `openapi` | JSON | `openapi.json` and `swagger.json` paths and methods, deduplicated against code routes; `x-source-file` (operation, path, or document level) links a surface to its handler, resolved from the spec folder or its nearest ancestor that contains the file. Append `@function` for a function or `@Class:method` for a class method. A class-only `@Class` traces constructor-injected classes one level out. A surface without it is marked `linkReason: missing-x-source-file` and flow refuses to trace it with `SURFACE_UNTRACEABLE` |
 | 6 | `expo` | TSX | screen files in a router directory |
 
 ## 6. Semantic diff

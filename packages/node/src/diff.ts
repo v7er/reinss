@@ -10,7 +10,7 @@ import {
   type Language,
   type SemanticChange,
   type SymbolKind,
-} from "@reins/core";
+} from "@reinss/core";
 import { structuredPatch } from "diff";
 
 // shortcut: line hunks are skipped above 4000 lines, upgrade to a streaming

@@ -5,7 +5,7 @@ import {
   componentIdFromRoot,
   componentKindFromPath,
   sortComponents,
-} from "@reins/core";
+} from "@reinss/core";
 import fg from "fast-glob";
 import { readJson, readText, resolveWithinRoot } from "./paths.js";
 
