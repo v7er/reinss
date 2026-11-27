@@ -10,10 +10,10 @@ Keep project intent next to the code as committed markdown, shaped like the repo
 
 The system SHALL store nodes as committed markdown files in a directory tree under `.reins/knowledge/`, SHALL treat the containing directory as the node's component or boundary, and SHALL read OpenSpec under `openspec/` as read-only knowledge.
 
-#### Scenario: Reading a node without Reins
+#### Scenario: Reading a note without Reins
 
-- **WHEN** a person opens a node file
-- **THEN** the node is readable and editable as plain markdown with YAML frontmatter
+- **WHEN** a person opens a note file
+- **THEN** the note is readable and editable as plain markdown with YAML frontmatter
 - **AND** the app does not store the node only in a database
 
 #### Scenario: Reading OpenSpec
@@ -78,7 +78,7 @@ The system SHALL report invalid frontmatter, duplicate addresses, broken links, 
 
 #### Scenario: Running a knowledge check
 
-- **WHEN** the user runs `reins check`
+- **WHEN** the user runs `reinss check`
 - **THEN** the report lists each item with severity, code, message, and path
 - **AND** errors fail the check
 
@@ -93,6 +93,23 @@ The system SHALL report invalid frontmatter, duplicate addresses, broken links, 
 - **WHEN** a node's `component` field does not match its directory
 - **THEN** the check reports the expected and actual component
 - **AND** the node is not silently rewritten
+
+### Requirement: Require human review for proposals
+
+The system SHALL write agent proposals to `knowledge/inbox/` with `status: proposed` and SHALL require an explicit human action to accept them.
+
+#### Scenario: Proposing a note
+
+- **WHEN** an agent proposes a node
+- **THEN** the node lands in `inbox/` with `status: proposed`
+- **AND** the result includes a diff for review
+
+#### Scenario: Accepting a note
+
+- **WHEN** a human accepts a proposal
+- **THEN** the node moves to its component directory
+- **AND** `status` becomes `accepted`
+- **AND** the change is visible in Git
 
 ## ADDED Requirements
 

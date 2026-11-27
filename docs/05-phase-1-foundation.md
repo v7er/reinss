@@ -22,7 +22,7 @@ Plus the same path over CLI JSON and three MCP tools, because the API must be tr
 
 ## 2. Non-goals
 
-- Surface detection, semantic diff, knowledge notes, watcher, LLM, packaging for distribution.
+- Surface detection, semantic diff, knowledge nodes, watcher, LLM, packaging for distribution.
 - Multiple windows, tabs, or workspaces.
 - Settings UI beyond theme and recent repositories.
 - Windows and Linux builds.

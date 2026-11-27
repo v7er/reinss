@@ -130,7 +130,7 @@ The system SHALL show the comment thread for a node and SHALL write a comment on
 - **WHEN** the user submits a comment
 - **THEN** the comment is appended to `refs/notes/reins` for the current commit
 - **AND** the studio does not push or fetch Git refs
-- **AND** a failure to write the note leaves the node and the editor untouched
+- **AND** a failure to write the git notes entry leaves the node and the editor untouched
 
 ### Requirement: Stay usable without the index or the network
 
@@ -157,3 +157,88 @@ The system SHALL keep the tree interactive for trees up to 5,000 nodes.
 - **WHEN** the user navigates the studio with a keyboard only
 - **THEN** the tree, editor, validation panel, and thread are reachable in visual order
 - **AND** every coverage dot has a text label
+
+### Requirement: Apply a built-in knowledge template
+
+The system SHALL ship built-in templates and SHALL keep an existing `template.md` instead of overwriting it.
+
+#### Scenario: Listing templates
+
+- **WHEN** the user runs `reinss knowledge init --list-templates`
+- **THEN** the output names `default`, `minimal`, `c4`, and `domain` with a one-line purpose
+
+#### Scenario: Applying the C4 template
+
+- **WHEN** the user runs `reinss knowledge init --template c4`
+- **THEN** `.reins/knowledge/template.md` declares context, container, component, code, ownership, and inbox layers
+- **AND** the layer directories are created
+- **AND** a later init keeps the existing template and reports it
+
+### Requirement: Draft nodes with an opted-in model
+
+The system SHALL draft nodes from code, specs, and requirements only when AI drafting is enabled, and SHALL write only proposed nodes.
+
+#### Scenario: Disabled by default
+
+- **WHEN** the user runs `reinss knowledge init --from-code --ai` without `llm.enabled`, a model, or an API key
+- **THEN** the command exits `1` with `LLM_DISABLED`
+- **AND** no network request is made
+
+#### Scenario: Preview
+
+- **WHEN** AI drafting is enabled and `--write` is absent
+- **THEN** the command prints the prompt that would be sent and the prompt size
+- **AND** no request is made and no file is written
+
+#### Scenario: Writing drafts
+
+- **WHEN** the user passes `--ai --write`
+- **THEN** the prompt contains the planned components and excerpts from `openspec/` and README
+- **AND** each returned draft is validated against the planned components and template layers
+- **AND** every written node has `status: proposed` and `provenance.kind: agent`
+- **AND** a human accepts each node before it becomes accepted
+
+#### Scenario: Model failure
+
+- **WHEN** the model request fails, times out, or returns unusable JSON
+- **THEN** the command exits `1` with `LLM_FAILED`
+- **AND** no node is written
+
+### Requirement: Configure a local model from the desktop
+
+The system SHALL discover loopback OpenAI-compatible providers, list their models, save the selection, and keep the rest of the config unchanged.
+
+#### Scenario: Auto-discovery
+
+- **WHEN** the user opens Settings and a local server is listening
+- **THEN** the provider and its models are listed with the base URL
+- **AND** choosing a provider fills the base URL and model
+- **AND** probes time out in under a second each
+
+#### Scenario: Saving
+
+- **WHEN** the user saves AI settings
+- **THEN** `.reins/config.json` gains the llm fields and keeps every other key
+- **AND** an invalid URL is rejected before writing
+
+#### Scenario: No key for a local endpoint
+
+- **WHEN** the base URL is loopback
+- **THEN** AI drafting works without an API key
+- **AND** a non-loopback endpoint without a key reports `LLM_DISABLED`
+
+### Requirement: Initialize knowledge from the desktop
+
+The system SHALL provide an Initialize action in the Studio that applies a template, previews or writes a component plan, and can use the configured model.
+
+#### Scenario: Preview
+
+- **WHEN** the user chooses a template and presses Preview
+- **THEN** the template is created if missing and the plan or prompt is shown
+- **AND** no node is written
+
+#### Scenario: Writing
+
+- **WHEN** the user presses Initialize
+- **THEN** the tree reloads with the new proposed nodes
+- **AND** AI drafting writes only proposed nodes

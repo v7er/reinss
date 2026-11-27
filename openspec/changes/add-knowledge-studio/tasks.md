@@ -1,12 +1,20 @@
 # Tasks: knowledge studio
 
-Nothing here is implemented. This is the requirement and build plan for the change. Do the phases in order; each phase leaves a verifiable state.
+Status after implementation:
+
+- Done: core tree types and template parser, index and query engine, tree loader, save and accept, coverage, bootstrap, migration, comments over Git notes, session methods, sidecar dispatch, MCP tools, CLI commands, studio UI, ADR-021/022, data contracts, harness docs, the `reins-knowledge` skill.
+- Not done: the three repository fixtures (tests use temporary repositories), a formal benchmark run for 4.7/10.4, the no-dependency assertion test (4.8), the end-to-end agent transcript (9.3), and exercising the studio in the running desktop app (no display here).
+- Added after the first implementation: settings page with local provider discovery, Studio Initialize flow. built-in templates (`default`, `minimal`, `c4`, `domain`), opt-in AI drafting in `knowledge init --ai`, removal of the Check tab, and removal of the old note concept.
+- Note removal: the flat note API, `notes` and `note` CLI commands, and `KnowledgeBoard` are deleted. `proposeNode` replaces `proposeNote`; Git-notes comments gained a push hint and show comments on uncommitted nodes.
+- Deviations: `reinss studio` prints how to start the desktop app instead of launching it; index reuse is by content hash, not a stat fast path; the studio edits an existing node by saving the same address, but has no rich markdown editor or diff-before-save gate.
+
+Do the phases in order; each phase leaves a verifiable state.
 
 ## 1. Record the decisions first
 
 - [ ] 1.1 Add ADR-021 (directory tree nodes) and ADR-022 (disposable lexical index) to `docs/07-decisions-and-risks.md`, and mark ADR-010 and ADR-012 superseded with the new record ids. Verify: `grep -n "ADR-021\|ADR-022\|superseded" docs/07-decisions-and-risks.md`
 - [ ] 1.2 Clarify ADR-003: a disposable knowledge index is not a copy of the code graph. Verify: `sed -n '/ADR-003/,/ADR-004/p' docs/07-decisions-and-risks.md`
-- [ ] 1.3 Extend `docs/03-data-contracts.md` section 7 with the node address, tree grammar, template contract, index cache format, and the new error codes. Verify: `pnpm typecheck` (types referenced by the doc must exist before merge) or a docs-only review before code lands.
+- [ ] 1.3 Extend `docs/03-data-contracts.md` section 7 with the node address, tree grammar, template contract, index cache format, and the new error codes. Verify: `rg -n "Knowledge nodes|Node address|template.md" docs/03-data-contracts.md`
 - [ ] 1.4 Update the affected requirements in `docs/01-product-spec.md` 5.5 and the tool and skill lists in `docs/06-ai-harness.md`. Verify: `grep -n "knowledge" docs/01-product-spec.md docs/06-ai-harness.md`
 
 ## 2. Core model
@@ -21,7 +29,7 @@ Nothing here is implemented. This is the requirement and build plan for the chan
 
 - [ ] 3.1 Implement the tree walker in `packages/node`: skip cache and ignored paths, separate nodes from guidance and index files, derive components and inheritance order. Verify: `pnpm vitest run packages/node`
 - [ ] 3.2 Implement address resolution, duplicate detection, and component/layer derivation. Verify: `pnpm vitest run packages/node`
-- [ ] 3.3 Extend `reins check` with template, layer, component, guidance naming, and index file findings. Verify: `pnpm reinss check --json` on a fixture with one of each violation.
+- [ ] 3.3 Extend `reinss check` with template, layer, component, guidance naming, and index file findings. Verify: `pnpm reinss check --json` on a fixture with one of each violation.
 - [ ] 3.4 Add three fixtures under `test/fixtures`: a valid tree, a template-violating tree, and a tree with orphan and unmapped components. Verify: `pnpm test`
 
 ## 4. Index engine
@@ -37,10 +45,10 @@ Nothing here is implemented. This is the requirement and build plan for the chan
 
 ## 5. CLI
 
-- [ ] 5.1 Add `reins ask`, `reins knowledge get`, `search`, and `context` with `--json` and the existing exit codes. Verify: `node apps/cli/dist/main.js ask "refund policy" --json`
-- [ ] 5.2 Add `reins knowledge new` and `check`, writing only after validation. Verify: `node apps/cli/dist/main.js knowledge new --type spec --component components/billing --title "Refund policy"` on a fixture.
-- [ ] 5.3 Add `reins studio` as a thin launcher for the desktop route. Verify: `node apps/cli/dist/main.js studio --help`
-- [ ] 5.4 Add `reins knowledge migrate` with preview by default, `git mv`, and unresolved nodes left in `inbox/`. Verify: run on the migration fixture and diff `git status`.
+- [ ] 5.1 Add `reinss ask`, `reinss knowledge get`, `search`, and `context` with `--json` and the existing exit codes. Verify: `node apps/cli/dist/main.js ask "refund policy" --json`
+- [ ] 5.2 Add `reinss knowledge new` and `check`, writing only after validation. Verify: `node apps/cli/dist/main.js knowledge new --type spec --component components/billing --title "Refund policy"` on a fixture.
+- [ ] 5.3 Add `reinss studio` as a thin launcher for the desktop route. Verify: `node apps/cli/dist/main.js studio --help`
+- [ ] 5.4 Add `reinss knowledge migrate` with preview by default, `git mv`, and unresolved nodes left in `inbox/`. Verify: run on the migration fixture and diff `git status`.
 - [ ] 5.5 Add the new MCP tools with schemas identical to core, capped results, and no new write tool. Verify: `pnpm vitest run apps/cli`
 
 ## 6. Bootstrap from code
@@ -53,7 +61,7 @@ Nothing here is implemented. This is the requirement and build plan for the chan
 ## 7. Sync coverage
 
 - [ ] 7.1 Compute covered, stale, orphan, unmapped, and invalid per component from the tree and the graph. Verify: `pnpm vitest run packages/node`
-- [ ] 7.2 Add coverage to `reins knowledge check` and to the session summary. Verify: `node apps/cli/dist/main.js knowledge check --json`
+- [ ] 7.2 Add coverage to `reinss knowledge check` and to the session summary. Verify: `node apps/cli/dist/main.js knowledge check --json`
 - [ ] 7.3 Prove no auto-fix: a fixture with every coverage state is unchanged after the check. Verify: `git diff --exit-code test/fixtures/<coverage-fixture>`
 
 ## 8. Studio

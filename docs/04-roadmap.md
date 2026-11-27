@@ -25,6 +25,7 @@ Estimates assume one developer working with a coding agent, part time. They are 
 | 4 | Done, including OpenSpec import. |
 | 5 | Done: review workspace, embeddable components, MCP tools, harness pack. |
 | 6 | Partial: packaging, Windows/Linux, OpenAPI YAML import, Expo, LLM enrichment remain; the file watcher ships. |
+| 7 | Implemented: knowledge tree, studio, lexical index, bootstrap, coverage, git-notes comments. Performance budgets are unrecorded. |
 
 ## 3. Overview
 
@@ -34,9 +35,10 @@ Estimates assume one developer working with a coding agent, part time. They are 
 | 1 | Foundation and vertical slice | 2 to 3 weeks | 0 | Overbuilding the skeleton; adapter assumptions |
 | 2 | Surfaces and graph exploration | 2 to 3 weeks | 1 | Detector coverage and false links |
 | 3 | Semantic diff | 2 to 4 weeks | 1 | Matcher accuracy; parser coverage |
-| 4 | Knowledge ledger | 2 to 3 weeks | 1, 2 | Link validation cost; over-modeling note types |
+| 4 | Knowledge ledger | 2 to 3 weeks | 1, 2 | Link validation cost; over-modeling node types |
 | 5 | Review workspace and embed | 2 to 3 weeks | 2, 3, 4 | Three-pane state complexity; host API leaks |
 | 6 | Hardening and full agent layer | 2 to 4 weeks | all | Performance and platform packaging |
+| 7 | Knowledge tree and studio | 2 to 3 weeks | 4 | Migration cost; template bureaucracy |
 
 Total: roughly 12 to 20 weeks of focused work. Phases 2, 3, and 4 are independent after Phase 1 and may be reordered if a real user pulls one forward. The default order is deliberate: surfaces first because they produce the most user value per line, diff second because it validates the parser path, knowledge third because it needs surfaces to link against.
 
@@ -70,7 +72,7 @@ Total: roughly 12 to 20 weeks of focused work. Phases 2, 3, and 4 are independen
 
 Detailed plan: [05. Phase 1 foundation](05-phase-1-foundation.md).
 
-**Not in scope.** Surfaces, semantic diff, knowledge notes, watcher, packaging for distribution, LLM anything, tldraw, custom elements.
+**Not in scope.** Surfaces, semantic diff, knowledge nodes, watcher, packaging for distribution, LLM anything, tldraw, custom elements.
 
 **Exit gate.**
 
@@ -162,9 +164,9 @@ Detailed plan: [05. Phase 1 foundation](05-phase-1-foundation.md).
 - Note parser, schema validation, ID rules, typed links, backlinks, mentions.
 - Knowledge index cache with mtime and content hashing.
 - Note repository with atomic writes and proposal inbox.
-- `KnowledgeBoard` card and canvas view with local positions.
+- Knowledge card view with local positions, replaced by the Studio tree in Phase 7.
 - Note editor: markdown text area with preview. No rich-text editor in this phase.
-- CLI: `reins notes`, `reins note <id>`, `reins note propose`, `reins check`.
+- CLI: `reins propose`, `reins knowledge get <address>`, `reins check`.
 - MCP: `reins_knowledge_search`, `reins_knowledge_get`, `reins_knowledge_propose`, `reins_check`.
 - Constraint evaluation for `forbidden-import` and `forbidden-call`.
 - Code link verification through Trail skeleton, batched by file.
@@ -174,11 +176,11 @@ Detailed plan: [05. Phase 1 foundation](05-phase-1-foundation.md).
 **Exit gate.**
 
 - [ ] A note with an invalid field fails with `NOTE_INVALID`, the path, and the field.
-- [ ] A broken note link, unknown symbol, and unknown surface each appear as distinct check codes.
+- [ ] A broken node link, unknown symbol, and unknown surface each appear as distinct check codes.
 - [ ] `reins check` on the knowledge fixture completes in 1 s without code verification and 4 s with it.
 - [ ] Accepting a proposal moves it out of `inbox/`, sets `accepted`, and produces a Git diff only for that file.
 - [ ] The board renders 100 notes and 200 links without dropping below 30 fps in the recorded session.
-- [ ] Editing a note updates backlinks within 300 ms after save.
+- [ ] Editing a node updates backlinks within 300 ms after save.
 - [ ] Constraint rules produce pass, fail, and not-applicable outcomes on the diff fixtures.
 - [ ] No note content is stored only in a cache or a database.
 
@@ -239,7 +241,34 @@ Detailed plan: [05. Phase 1 foundation](05-phase-1-foundation.md).
 - [ ] Upgrade from the previous cache schema requires no user action.
 - [ ] Documentation covers install, repository setup, embed API, MCP tools, and knowledge authoring.
 
-## 11. Requirement traceability
+## 11. Phase 7: Knowledge tree and studio
+
+**Goal.** Make knowledge mirror the repository, writable by a person and readable by an agent in milliseconds, with no model and no network.
+
+**Ships.**
+
+- Node tree under `.reins/knowledge/`, `template.md` layers, `_` guidance files, per-directory index hints.
+- Studio: component tree, node editor, search, coverage, comments.
+- Lexical index with BM25, aliases, intent routing, and a disposable JSON cache.
+- `reinss ask`, `reinss knowledge init|new|get|search|context|check|coverage|migrate|comment`, `reinss studio`.
+- Bootstrap from the Trail graph, coverage per component, Git-notes comment threads.
+- Built-in templates: `default`, `minimal`, `c4`, `domain`.
+- Opt-in AI drafting in `knowledge init --ai`, disabled by default and limited to proposed nodes.
+- Settings page with local provider discovery, and an Initialize flow inside the Studio.
+- MCP tools `reins_knowledge_search`, `reins_knowledge_get`, `reins_knowledge_context`, `reins_knowledge_coverage`, and the unchanged proposal write path.
+- The `reins-knowledge` skill and ADR-021, ADR-022.
+
+**Not in scope.** Embeddings, LLM calls, SQLite, a second knowledge store, full `index.yaml` grouping semantics, cross-machine sync.
+
+**Exit gate.**
+
+- [ ] `pnpm typecheck`, `pnpm test`, and `pnpm build` pass.
+- [ ] `reinss knowledge check` passes on a migrated repository with no template errors.
+- [ ] Cold build, warm build, query p95, and context pack size are measured on the recorded machine and recorded in `openspec/changes/add-knowledge-studio/design.md`.
+- [ ] A bootstrap on a fixture repository writes only `proposed` nodes and changes nothing outside `.reins/knowledge/`.
+- [ ] The studio is exercised in the desktop app, or the reason it could not be is stated.
+
+## 12. Requirement traceability
 
 | Requirement group | Phase introduced | Phase completed |
 | --- | --- | --- |
@@ -259,6 +288,10 @@ Detailed plan: [05. Phase 1 foundation](05-phase-1-foundation.md).
 | KNOW-9 | 5 | 5 |
 | KNOW-10 | 4 | 4 |
 | KNOW-11 | 6 | 6 |
+| KNOW-12 to KNOW-14, KNOW-16 | 7 | 7 |
+| KNOW-15 | 7 | 7 |
+| KNOW-17, KNOW-18 | 7 | 7 |
+| KNOW-1, KNOW-5, KNOW-7 (tree revision) | 7 | 7 |
 | REV-1 to REV-3 | 5 | 5 |
 | REV-4 to REV-5 | 6 | 6 |
 | EMBED-1 to EMBED-4 | 5 | 5 |
@@ -267,7 +300,7 @@ Detailed plan: [05. Phase 1 foundation](05-phase-1-foundation.md).
 | MCP-1 to MCP-2 | 1 | 5 |
 | MCP-3 | 5 | 6 |
 
-## 12. Phase exit routine
+## 13. Phase exit routine
 
 Run at the end of every phase:
 
@@ -279,7 +312,7 @@ Run at the end of every phase:
 6. Run the agent tasks for the phase and record tool calls and token counts.
 7. Tag the commit `phase-<n>` after the gate passes.
 
-## 13. Stop and pivot criteria
+## 14. Stop and pivot criteria
 
 Stop the current phase and reconsider when any of these hold:
 
@@ -289,7 +322,7 @@ Stop the current phase and reconsider when any of these hold:
 - The desktop app cannot hold the memory budget after the graph renderer work. Pivot: move the renderer to a separate window process or reduce the live node cap.
 - A required dependency changes license or stops being maintained. Re-evaluate against the whitelist in `07`; do not add a replacement in the same phase without a decision record.
 
-## 14. What stays constant across phases
+## 15. What stays constant across phases
 
 - One graph source: Trail.
 - One API: `ReinsApi` in core.

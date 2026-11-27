@@ -34,16 +34,16 @@ export const configSchema = z.object({
   check: z
     .object({
       verifyCodeLinks: z.boolean().default(true),
-      folderMismatch: z.enum(["error", "warning", "off"]).default("warning"),
     })
-    .default({ verifyCodeLinks: true, folderMismatch: "warning" }),
+    .default({ verifyCodeLinks: true }),
   llm: z
     .object({
       enabled: z.boolean().default(false),
       provider: z.string().nullable().default(null),
       model: z.string().nullable().default(null),
+      baseUrl: z.string().nullable().default(null),
     })
-    .default({ enabled: false, provider: null, model: null }),
+    .default({ enabled: false, provider: null, model: null, baseUrl: null }),
   ui: z.object({ theme: z.enum(["light", "dark", "system"]).default("system") }).default({
     theme: "system",
   }),

@@ -1,5 +1,5 @@
 import { Badge, Group, ScrollArea, Stack, Tabs, Text, UnstyledButton } from "@mantine/core";
-import type { DiffRange, NoteSummary, SemanticDiff } from "@reinss/core";
+import type { DiffRange, KnowledgeTree, SemanticDiff } from "@reinss/core";
 import { useReins } from "./context.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { GraphView } from "./GraphView.js";
@@ -16,7 +16,10 @@ export function ReviewWorkspace({ range, height = 640 }: ReviewWorkspaceProps) {
     () => client.call<SemanticDiff>("diff", { range }),
     [JSON.stringify(range)],
   );
-  const notes = useAsync(() => client.call<NoteSummary[]>("listNotes", { limit: 20 }), []);
+  const tree = useAsync(() => client.call<KnowledgeTree>("knowledgeTree"), []);
+  const nodes = (tree.data?.nodes ?? []).filter(
+    (node) => node.source === "reins" && node.status === "accepted",
+  );
 
   const firstSymbol =
     diff.data?.files
@@ -54,23 +57,23 @@ export function ReviewWorkspace({ range, height = 640 }: ReviewWorkspaceProps) {
         <Stack gap="xs">
           <Group justify="space-between">
             <Text size="xs" c="dimmed">
-              Notes
+              Nodes
             </Text>
             <Badge size="xs" variant="light" color="gray">
-              {notes.data?.length ?? 0}
+              {nodes.length}
             </Badge>
           </Group>
           <ScrollArea h={contentHeight - 32} type="auto">
             <Stack gap={0}>
-              {(notes.data ?? []).map((note) => (
+              {nodes.map((node) => (
                 <UnstyledButton
-                  key={note.id}
+                  key={node.address}
                   className="reins-row"
-                  onClick={() => onNavigate?.({ type: "note", id: note.id })}
+                  onClick={() => onNavigate?.({ type: "node", id: node.address })}
                 >
-                  <span className="reins-row-main">{note.title}</span>
+                  <span className="reins-row-main">{node.title}</span>
                   <span className="reins-row-meta">
-                    {note.type} · {note.status}
+                    {node.type} · {node.status}
                   </span>
                 </UnstyledButton>
               ))}

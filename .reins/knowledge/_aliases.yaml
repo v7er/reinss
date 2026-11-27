@@ -1,0 +1,6 @@
+# Query aliases. One key, a list of values. Values add weight 0.6 at query time.
+knowledge: [node, notes, intent]
+graph: [trail, code graph, symbols]
+diff: [semantic diff, change review]
+mcp: [agent tools, model context protocol]
+constraint: [rule, forbidden, never]

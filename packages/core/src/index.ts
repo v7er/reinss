@@ -6,4 +6,5 @@ export * from "./graph.js";
 export * from "./harness.js";
 export * from "./knowledge.js";
 export * from "./surfaces.js";
+export * from "./tree.js";
 export * from "./types.js";

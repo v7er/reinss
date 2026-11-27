@@ -6,7 +6,7 @@ Current state, as implemented:
 
 - Notes live in `.reins/knowledge/{specs,decisions,constraints,howto,questions,inbox}/<id>.md`, one flat folder per type (`docs/03-data-contracts.md` section 7).
 - Search is a linear scan with a fixed rank; 1,000 notes is the stated scale.
-- `reins check` validates frontmatter, duplicate IDs, links, symbols, surfaces, and stale spans.
+- `reinss check` validates frontmatter, duplicate IDs, links, symbols, surfaces, and stale spans.
 - Agents propose notes through one write path; humans accept them.
 
 Conflicting records:
@@ -45,6 +45,7 @@ The node tree reintroduces layers and directory structure (ADR-010 is superseded
 - **Node.** One markdown file below `.reins/knowledge/`, not prefixed with `_`, with valid frontmatter. Identity is its path relative to `.reins/knowledge/`, without the `.md` suffix. That address is stable across renames of the id field and is what comments and links use.
 - **Component.** A directory below `.reins/knowledge/` that contains at least one node or a `_rules.md`. A component is also the boundary for coverage and for guidance inheritance.
 - **Guidance file.** A file whose stem starts with `_`. It is never a node, never appears in a tree, list, or search result, and is loaded as context for the enclosing directory and its descendants.
+- **OpenSpec node.** An imported file under `openspec/` is a virtual node with the address `openspec/<path without .md>`. It is read-only, has `source: openspec`, is never written or moved, and never appears under the tree's layer globs. A Reins node with the same title does not shadow it; both can be returned by search with their source shown.
 - **Layer.** A level declared in `template.md` by name and path glob. A node's layer is the first matching glob. Depth is a convention, not a rule; a template may put two layers at the same depth.
 - **Index file.** `index.yaml` or `index.json` in a directory. Declares ordering and grouping hints. This change reads `order: [node-address, ...]` and `groups: [{ title, nodes: [...] }]`. Anything else is preserved and ignored.
 
@@ -63,7 +64,7 @@ Existing required fields stay: `title`, `type`, `status`, `created`, `updated`. 
 
 ### 2.4 Tree rules
 
-1. `template.md` must exist once the tree has any node. Without it, `reins knowledge check` fails with `TEMPLATE_MISSING` and the studio refuses to create nodes.
+1. `template.md` must exist once the tree has any node. Without it, `reinss knowledge check` fails with `TEMPLATE_MISSING` and the studio refuses to create nodes.
 2. No node above the first layer glob. The root may hold guidance files and `template.md` only.
 3. Reserved names: `template.md`, any `_` stem, `index.yaml`, `index.json`. A node may not use them.
 4. Guidance files may appear in any directory. A child inherits every ancestor guidance file, nearest last.
@@ -107,7 +108,7 @@ See `_aliases.yaml`.
 - The `Layers` table is required. Each row needs a unique name and a glob that does not escape the root.
 - `Required fields` may add fields to the base set. It may not remove base fields.
 - Prose below the tables is guidance. It is not parsed beyond the required sections.
-- The template is validated by `reins knowledge check` and shown in the studio editor next to the form.
+- The template is validated by `reinss knowledge check` and shown in the studio editor next to the form.
 - Editing the template is a normal file edit with a diff. The studio validates before save and never writes a template that fails validation.
 
 ## 4. Fast index
@@ -142,7 +143,7 @@ The index is written to `.reins/.cache/knowledge-index.json`. It is disposable: 
 - Tokenize with lowercase, Unicode letters and digits, split on non-word characters, drop a small stop list per language, apply a suffix stemmer limited to plurals and common verb endings. No stemming library.
 - Score with BM25 (`k1 = 1.2`, `b = 0.75`). Field weight multiplies term frequency: title `4`, tags `3`, headings `2`, body `1`, link labels `1`.
 - Additive bonuses: exact title match `6`, phrase match `3`, component name match `2`.
-- Intent routing reads the query for trigger words and sets a default type filter, which the caller can override: `requirement|spec|must|shall` to `spec`; `why|decision|chose|ruled` to `decision`; `technical|architecture|how|design` to `howto` and `decision`; `rule|never|forbid` to `constraint`; `question|open` to `question`.
+- Intent routing reads the query for trigger words and boosts matching types (1.25 per matching entry) so they rank above other matches: `requirement|spec|must|shall` to `spec`; `why|decision|chose|ruled` to `decision`; `technical|architecture|how|design` to `howto` and `decision`; `rule|never|forbid` to `constraint`; `question|open` to `question`. Only a caller-supplied `type` filters.
 - Alias expansion: a query token that matches an alias key adds its values with weight `0.6`. Aliases are one-way pairs, capped at 32 per key.
 - Ties break by `updated` descending, then address ascending. Ranking is deterministic for one index revision.
 - Every result carries the address, title, type, component, score, and a two-line excerpt with the best matching span. `--json` carries the same fields.
@@ -192,7 +193,7 @@ The build reports `filesScanned`, `filesParsed`, `filesReused`, `bytes`, and `to
 
 ## 6. Bootstrap from code
 
-Command: `reins knowledge init --from-code [--dry-run | --write] [--max-components N]`.
+Command: `reinss knowledge init --from-code [--dry-run | --write] [--max-components N]`.
 
 1. Require a Trail graph and a clean `reins` config. Do not build a graph as a side effect.
 2. Read workspace packages, top-level source directories, and Trail's file clusters. Derive candidate components: package name plus relative path.
@@ -215,7 +216,7 @@ Coverage is computed per component from the tree and the graph:
 | `invalid` | Template, frontmatter, or link error. | error |
 
 - The component to code mapping comes from `component.code` in frontmatter when present, else from the template glob convention, else from the component name matched against package and directory names.
-- `reins knowledge check` reports each state with `path`, `component`, `state`, and `fix`.
+- `reinss knowledge check` reports each state with `path`, `component`, `state`, and `fix`.
 - The studio shows the state on the tree dot and in the component header.
 - Nothing is auto-fixed. Suggestions are text.
 
@@ -254,15 +255,15 @@ Coverage is computed per component from the tree and the graph:
 ## 10. CLI
 
 ```bash
-reins knowledge init [--from-code] [--dry-run] [--write]
-reins knowledge new --type spec --component components/billing --title "..."
-reins knowledge get <address|id>
-reins knowledge search "<query>" [--type spec] [--limit N]
-reins knowledge context <code-path>
-reins knowledge check [--json]
-reins knowledge migrate [--dry-run] [--write] [--map <old>=<new>]
-reins ask "<question>"
-reins studio
+reinss knowledge init [--from-code] [--dry-run] [--write]
+reinss knowledge new --type spec --component components/billing --title "..."
+reinss knowledge get <address|id>
+reinss knowledge search "<query>" [--type spec] [--limit N]
+reinss knowledge context <code-path>
+reinss knowledge check [--json]
+reinss knowledge migrate [--dry-run] [--write] [--map <old>=<new>]
+reinss ask "<question>"
+reinss studio
 ```
 
 - Every query supports `--json` and the existing exit codes.
@@ -275,7 +276,7 @@ reins studio
 2. Rewrite frontmatter: drop the id-as-filename assumption, set `component` and `layer`, keep `links` and convert note ids to addresses when the target is known.
 3. Move with `git mv`, and keep a `migration.md` note that lists every old path and new path.
 4. Leave unknown targets in `inbox/` as `proposed`, never delete them.
-5. `reins knowledge check` must pass after migration or list the exact remaining errors.
+5. `reinss knowledge check` must pass after migration or list the exact remaining errors.
 
 ## 12. Alternatives rejected
 

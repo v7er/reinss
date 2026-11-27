@@ -5,8 +5,9 @@ import {
   type FlowRequest,
   type GraphRequest,
   isReinsError,
-  type NoteFilter,
-  type NoteProposal,
+  type KnowledgeNodeInput,
+  type KnowledgeQuery,
+  type NodeProposal,
   type PackRequest,
   type RefreshOptions,
   type SearchOptions,
@@ -145,12 +146,46 @@ async function handle(request: Request): Promise<unknown> {
       return session.flow(params as FlowRequest);
     case "diff":
       return session.diff(params as DiffRequest);
-    case "listNotes":
-      return session.listNotes((params ?? {}) as NoteFilter);
-    case "getNote":
-      return session.getNote((params as { id: string }).id);
-    case "proposeNote":
-      return session.proposeNote(params as NoteProposal);
+    case "proposeNode":
+      return session.proposeNode(params as NodeProposal);
+    case "initKnowledge":
+      return session.initKnowledge((params as { template?: string } | undefined)?.template);
+    case "aiSettings":
+      return session.aiSettings();
+    case "saveAiSettings":
+      return session.saveAiSettings(
+        params as { enabled: boolean; provider?: string; model?: string; baseUrl?: string },
+      );
+    case "discoverAi":
+      return session.discoverAi();
+    case "aiKnowledgeInit":
+      return session.aiKnowledgeInit(
+        params as { write?: boolean; maxComponents?: number; maxDrafts?: number } | undefined,
+      );
+    case "knowledgeTree":
+      return session.knowledgeTree();
+    case "acceptKnowledgeNode":
+      return session.acceptKnowledgeNode(params as { address: string; component?: string });
+    case "knowledgeNode":
+      return session.knowledgeNode((params as { address: string }).address);
+    case "saveKnowledgeNode":
+      return session.saveKnowledgeNode(params as KnowledgeNodeInput);
+    case "searchKnowledge":
+      return session.searchKnowledge(params as KnowledgeQuery);
+    case "knowledgeContext":
+      return session.knowledgeContext((params as { path: string }).path);
+    case "knowledgeCoverage":
+      return session.knowledgeCoverage();
+    case "bootstrapKnowledge":
+      return session.bootstrapKnowledge(
+        params as { maxComponents?: number; write?: boolean; dir?: string } | undefined,
+      );
+    case "migrateKnowledge":
+      return session.migrateKnowledge(params as { write?: boolean; map?: Record<string, string> });
+    case "knowledgeComments":
+      return session.knowledgeComments((params as { address: string }).address);
+    case "addKnowledgeComment":
+      return session.addKnowledgeComment(params as { address: string; body: string });
     case "check":
       return session.check((params ?? {}) as CheckRequest);
     case "harnessPack":

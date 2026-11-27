@@ -29,7 +29,6 @@ import { useHotkeys } from "@mantine/hooks";
 import { Spotlight, type SpotlightActionData, spotlight } from "@mantine/spotlight";
 import type {
   BootstrapResult,
-  CheckReport,
   DiffRange,
   FileDiff,
   GitBranches,
@@ -50,12 +49,13 @@ import type {
   SymbolHit,
 } from "@reinss/core";
 import {
+  AiSettingsPanel,
   CodeViewer,
   DiffViewer,
   GitRefs,
   GitTreeViewer,
   GraphView,
-  KnowledgeBoard,
+  KnowledgeStudio,
   LANE_COLORS,
   layoutGitTree,
   ReinsProvider,
@@ -84,6 +84,7 @@ import {
   IconRefresh,
   IconRoute,
   IconSearch,
+  IconSettings,
   IconTag,
   IconTrash,
   IconWand,
@@ -103,7 +104,6 @@ import { tailPath } from "./path.js";
 type ToolId = "status" | "git" | "surfaces" | "knowledge" | "review";
 type GitTab = "changes" | "history" | "reviews" | "refs";
 type SurfaceTab = "entry" | "flow" | "graph";
-type KnowledgeTab = "notes" | "check";
 type SyncState = "idle" | "syncing" | "synced" | "error";
 
 const RECENT_KEY = "reins.recentTools";
@@ -580,61 +580,6 @@ function FlowTool({ target, onTarget }: { target: string; onTarget: (value: stri
           <CodeViewer path={modalPath} source={sourceMap.get(modalPath)} height="80vh" />
         ) : null}
       </Modal>
-    </Stack>
-  );
-}
-
-function CheckTool() {
-  const { client } = useReins();
-  const state = useAsync(() => client.call<CheckReport>("check", { scope: "knowledge+code" }), []);
-  return (
-    <Stack gap="md">
-      {state.loading ? (
-        <Group gap="sm">
-          <Loader size="sm" />
-          <Text size="sm" c="dimmed">
-            Checking knowledge and code links…
-          </Text>
-        </Group>
-      ) : null}
-      {state.error ? (
-        <Alert color="red" variant="light">
-          {state.error.message}
-        </Alert>
-      ) : null}
-      {state.data ? (
-        <>
-          <Group>
-            <Badge size="lg" variant="light" color={state.data.ok ? "green" : "red"}>
-              {state.data.ok ? "Check passed" : "Check failed"}
-            </Badge>
-            <Text size="sm" c="dimmed">
-              {state.data.summary.error} errors · {state.data.summary.warning} warnings
-            </Text>
-          </Group>
-          <Paper withBorder radius="lg" p={4}>
-            <ScrollArea h={420} type="auto">
-              <Stack gap={0}>
-                {state.data.items.map((item) => (
-                  <div key={`${item.code}-${item.message}`} className="reins-row">
-                    <span className="reins-row-main">
-                      <Badge
-                        size="xs"
-                        variant="light"
-                        color={item.severity === "error" ? "red" : "yellow"}
-                      >
-                        {item.severity}
-                      </Badge>{" "}
-                      {item.message}
-                    </span>
-                    <span className="reins-row-meta">{item.path ?? item.noteId ?? ""}</span>
-                  </div>
-                ))}
-              </Stack>
-            </ScrollArea>
-          </Paper>
-        </>
-      ) : null}
     </Stack>
   );
 }
@@ -1728,21 +1673,8 @@ function SurfacesTool({
   );
 }
 
-function KnowledgeTool({ tab, onTab }: { tab: KnowledgeTab; onTab: (tab: KnowledgeTab) => void }) {
-  return (
-    <Tabs value={tab} onChange={(value) => value && onTab(value as KnowledgeTab)}>
-      <Tabs.List>
-        <Tabs.Tab value="notes">Notes</Tabs.Tab>
-        <Tabs.Tab value="check">Check</Tabs.Tab>
-      </Tabs.List>
-      <Tabs.Panel value="notes" pt="md">
-        <KnowledgeBoard height={560} />
-      </Tabs.Panel>
-      <Tabs.Panel value="check" pt="md">
-        <CheckTool />
-      </Tabs.Panel>
-    </Tabs>
-  );
+function KnowledgeTool() {
+  return <KnowledgeStudio height={560} />;
 }
 
 function HomeTool({
@@ -1879,11 +1811,13 @@ function FloatingControls({
   onHome,
   onCommand,
   onSync,
+  onSettings,
   syncState,
 }: {
   onHome: () => void;
   onCommand: () => void;
   onSync: () => void;
+  onSettings: () => void;
   syncState: SyncState;
 }) {
   const syncLabel =
@@ -1911,6 +1845,17 @@ function FloatingControls({
             onClick={onCommand}
           >
             <IconCommand size={18} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label="Settings" position="top">
+          <ActionIcon
+            size="lg"
+            radius="xl"
+            variant="subtle"
+            aria-label="Settings"
+            onClick={onSettings}
+          >
+            <IconSettings size={18} />
           </ActionIcon>
         </Tooltip>
         <Tooltip label={syncLabel} position="top">
@@ -1958,9 +1903,9 @@ function Workspace({
   const [flowTarget, setFlowTarget] = useState("");
   const [gitTab, setGitTab] = useState<GitTab>("changes");
   const [surfaceTab, setSurfaceTab] = useState<SurfaceTab>("entry");
-  const [knowledgeTab, setKnowledgeTab] = useState<KnowledgeTab>("notes");
   const [gitRange, setGitRange] = useState<DiffRange>({ mode: "working" });
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [repos, setRepos] = useState<string[]>([]);
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -2001,7 +1946,6 @@ function Workspace({
     setFlowTarget("");
     setGitTab("changes");
     setSurfaceTab("entry");
-    setKnowledgeTab("notes");
   }, [repo.root]);
 
   const openSwitcher = useCallback(() => {
@@ -2082,8 +2026,7 @@ function Workspace({
         setFlowTarget(target.id);
         setSurfaceTab("flow");
         select("surfaces");
-      } else if (target.type === "note") {
-        setKnowledgeTab("notes");
+      } else if (target.type === "node") {
         select("knowledge");
       } else if (target.type === "diff") {
         openReview(target.range ?? { mode: "working" });
@@ -2248,7 +2191,7 @@ function Workspace({
                 title="Knowledge"
                 description="Notes, constraints, and the check that keeps them honest."
               >
-                <KnowledgeTool tab={knowledgeTab} onTab={setKnowledgeTab} />
+                <KnowledgeTool />
               </ToolPage>
             ) : null}
           </Container>
@@ -2339,8 +2282,19 @@ function Workspace({
           onHome={() => select("status")}
           onCommand={() => spotlight.open()}
           onSync={() => void syncAll()}
+          onSettings={() => setSettingsOpen(true)}
           syncState={syncState}
         />
+
+        <Modal
+          opened={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          title="Settings"
+          centered
+          size="lg"
+        >
+          <AiSettingsPanel />
+        </Modal>
 
         <Spotlight
           actions={actions}

@@ -1,3 +1,21 @@
+import type {
+  AiSettings,
+  CoverageItem,
+  KnowledgeAcceptInput,
+  KnowledgeAiResult,
+  KnowledgeBootstrapResult,
+  KnowledgeCommentThread,
+  KnowledgeContextPack,
+  KnowledgeMigrationResult,
+  KnowledgeNode,
+  KnowledgeNodeInput,
+  KnowledgeQuery,
+  KnowledgeQueryResult,
+  KnowledgeSaveResult,
+  KnowledgeTree,
+  LocalAiProvider,
+} from "./tree.js";
+
 export const contractVersion = 1 as const;
 
 export type SymbolKind =
@@ -99,7 +117,7 @@ export interface RepoStatus {
     fingerprint: string | null;
     message?: string;
   };
-  knowledge: { notes: number; proposed: number; errors: number };
+  knowledge: { nodes: number; proposed: number; errors: number };
   surfaces: { count: number; stale: boolean };
 }
 
@@ -246,8 +264,8 @@ export interface SemanticDiff {
   truncatedBy: "operations" | "files" | null;
 }
 
-export type NoteType = "spec" | "decision" | "constraint" | "howto" | "question";
-export type NoteStatus = "proposed" | "accepted" | "superseded" | "deprecated" | "rejected";
+export type NodeType = "spec" | "decision" | "constraint" | "howto" | "question";
+export type NodeStatus = "proposed" | "accepted" | "superseded" | "deprecated" | "rejected";
 
 export type LinkRel =
   | "implements"
@@ -259,40 +277,20 @@ export type LinkRel =
   | "affects"
   | "relates_to";
 
-export type NoteLink =
+export type NodeLink =
+  | { rel: LinkRel; node: string }
   | { rel: LinkRel; note: string }
   | { rel: LinkRel; symbol: string }
   | { rel: LinkRel; surface: string }
   | { rel: LinkRel; commit: string }
   | { rel: LinkRel; file: string };
 
-export interface NoteSummary {
-  id: string;
-  title: string;
-  type: NoteType;
-  status: NoteStatus;
-  tags: string[];
-  updated: string;
-  path: string;
-  linkCount: number;
-  backlinkCount: number;
-  source?: "reins" | "openspec";
-}
-
-export interface KnowledgeNote extends NoteSummary {
-  body: string;
-  links: NoteLink[];
-  commits: string[];
-  mentions: string[];
-  frontmatter: Record<string, unknown>;
-}
-
-export interface NoteProposal {
-  type: NoteType;
+export interface NodeProposal {
+  type: NodeType;
   title: string;
   body: string;
   tags?: string[];
-  links?: NoteLink[];
+  links?: NodeLink[];
   source?: {
     kind: "review-comment" | "agent" | "manual";
     file?: string;
@@ -302,8 +300,8 @@ export interface NoteProposal {
   };
 }
 
-export interface NoteProposalResult {
-  id: string;
+export interface NodeProposalResult {
+  address: string;
   path: string;
   status: "proposed";
   diff: string;
@@ -313,10 +311,9 @@ export interface NoteProposalResult {
 export type CheckSeverity = "error" | "warning" | "info";
 
 export type CheckCode =
-  | "NOTE_INVALID"
-  | "NOTE_DUPLICATE_ID"
-  | "NOTE_FOLDER_MISMATCH"
-  | "NOTE_STATUS_INVALID"
+  | "NODE_INVALID"
+  | "NODE_DUPLICATE_ID"
+  | "NODE_STATUS_INVALID"
   | "LINK_BROKEN"
   | "LINK_DUPLICATE"
   | "LINK_TARGET_UNKNOWN"
@@ -325,13 +322,23 @@ export type CheckCode =
   | "SURFACE_UNKNOWN"
   | "CONSTRAINT_VIOLATED"
   | "CONSTRAINT_SKIPPED"
-  | "CONFIG_INVALID";
+  | "CONFIG_INVALID"
+  | "NOTE_ADDRESS_DUPLICATE"
+  | "TEMPLATE_MISSING"
+  | "TEMPLATE_INVALID"
+  | "LAYER_UNDECLARED"
+  | "COMPONENT_MISMATCH"
+  | "NODE_UNMAPPED"
+  | "NODE_ORPHAN"
+  | "NODE_STALE"
+  | "GUIDANCE_INVALID"
+  | "INDEX_INVALID";
 
 export interface CheckItem {
   code: CheckCode;
   severity: CheckSeverity;
   message: string;
-  noteId?: string;
+  nodeId?: string;
   path?: string;
   line?: number;
   fix?: string;
@@ -403,14 +410,6 @@ export interface FlowRequest {
   direction?: "in" | "out" | "both";
   depth?: number;
   maxNodes?: number;
-}
-
-export interface NoteFilter {
-  query?: string;
-  type?: NoteType;
-  status?: NoteStatus;
-  tag?: string;
-  limit?: number;
 }
 
 export interface CheckRequest {
@@ -615,16 +614,46 @@ export interface ReinsApi {
   listSurfaces(f?: SurfaceFilter): Promise<SurfacePage>;
   flow(req: FlowRequest): Promise<GraphSlice>;
   diff(req: DiffRequest): Promise<SemanticDiff>;
-  listNotes(f?: NoteFilter): Promise<NoteSummary[]>;
-  getNote(id: string): Promise<KnowledgeNote>;
-  proposeNote(input: NoteProposal): Promise<NoteProposalResult>;
+  proposeNode(input: NodeProposal): Promise<NodeProposalResult>;
+  initKnowledge(template?: string): Promise<{ created: string[]; kept: boolean }>;
+  aiSettings(): Promise<AiSettings>;
+  saveAiSettings(input: {
+    enabled: boolean;
+    provider?: string | null;
+    model?: string | null;
+    baseUrl?: string | null;
+  }): Promise<AiSettings>;
+  discoverAi(): Promise<LocalAiProvider[]>;
+  aiKnowledgeInit(req?: {
+    write?: boolean;
+    maxComponents?: number;
+    maxDrafts?: number;
+  }): Promise<KnowledgeAiResult>;
+  knowledgeTree(): Promise<KnowledgeTree>;
+  knowledgeNode(address: string): Promise<KnowledgeNode>;
+  saveKnowledgeNode(input: KnowledgeNodeInput): Promise<KnowledgeSaveResult>;
+  acceptKnowledgeNode(input: KnowledgeAcceptInput): Promise<KnowledgeSaveResult>;
+  searchKnowledge(query: KnowledgeQuery): Promise<KnowledgeQueryResult>;
+  knowledgeContext(codePath: string): Promise<KnowledgeContextPack>;
+  knowledgeCoverage(): Promise<CoverageItem[]>;
+  bootstrapKnowledge(req?: {
+    maxComponents?: number;
+    write?: boolean;
+    dir?: string;
+  }): Promise<KnowledgeBootstrapResult>;
+  migrateKnowledge(req?: {
+    write?: boolean;
+    map?: Record<string, string>;
+  }): Promise<KnowledgeMigrationResult>;
+  knowledgeComments(address: string): Promise<KnowledgeCommentThread>;
+  addKnowledgeComment(req: { address: string; body: string }): Promise<KnowledgeCommentThread>;
   check(req?: CheckRequest): Promise<CheckReport>;
   harnessPack(req: PackRequest): Promise<HarnessPack>;
   readFile(path: string, rev?: "working" | "staged"): Promise<{ path: string; text: string }>;
 }
 
 export interface NavigationTarget {
-  type: "symbol" | "surface" | "diff" | "note";
+  type: "symbol" | "surface" | "diff" | "node";
   id?: string;
   file?: string;
   line?: number;

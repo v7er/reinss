@@ -2,12 +2,14 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { parse } from "@babel/parser";
 import {
+  type AiSettings,
   assignComponent,
   type BootstrapResult,
   type CheckItem,
   type CheckReport,
   type CheckRequest,
   type Component,
+  type CoverageItem,
   composeHarnessPack,
   computeFingerprint,
   contractVersion,
@@ -16,7 +18,6 @@ import {
   type FlowRequest,
   finalizeDiff,
   finalizeFileDiff,
-  folderForType,
   type GitBranches,
   type GitCommit,
   type GitCommitRefs,
@@ -34,13 +35,23 @@ import {
   type GraphRevision,
   type GraphSlice,
   type HarnessPack,
-  type KnowledgeNote,
+  type KnowledgeAcceptInput,
+  type KnowledgeAiResult,
+  type KnowledgeBootstrapResult,
+  type KnowledgeCommentThread,
+  type KnowledgeContextPack,
+  type KnowledgeMigrationResult,
+  type KnowledgeNode,
+  type KnowledgeNodeInput,
+  type KnowledgeQuery,
+  type KnowledgeQueryResult,
+  type KnowledgeSaveResult,
+  type KnowledgeTree,
+  type LocalAiProvider,
   linkTarget,
   mergeSlices,
-  type NoteFilter,
-  type NoteProposal,
-  type NoteProposalResult,
-  type NoteSummary,
+  type NodeProposal,
+  type NodeProposalResult,
   normalizeAsk,
   normalizeCallers,
   normalizeKind,
@@ -65,7 +76,38 @@ import { readCache, writeCache } from "./cache.js";
 import { discoverComponents } from "./components.js";
 import { diffFile } from "./diff.js";
 import { type ChangedFile, GitAdapter } from "./git.js";
-import { folderMismatch, loadKnowledge, noteSummary, proposeNote } from "./knowledge.js";
+import { loadKnowledgeNodes, proposeNode } from "./knowledge.js";
+import {
+  aiPlanComponents,
+  applyAiDrafts,
+  buildKnowledgePrompt,
+  parseAiDrafts,
+  requestAiDrafts,
+} from "./knowledge-ai.js";
+import {
+  applyKnowledgeBootstrap,
+  defaultKnowledgeTemplate,
+  planKnowledgeBootstrap,
+} from "./knowledge-bootstrap.js";
+import { addKnowledgeComment, knowledgeComments } from "./knowledge-comments.js";
+import { knowledgeCoverage } from "./knowledge-coverage.js";
+import {
+  acceptKnowledgeNode,
+  knowledgeContext,
+  queryKnowledge,
+  requireNode,
+  saveKnowledgeNode,
+} from "./knowledge-index.js";
+import { migrateKnowledge } from "./knowledge-migrate.js";
+import { applyKnowledgeTemplate, getKnowledgeTemplatePreset } from "./knowledge-templates.js";
+import { loadKnowledgeTree } from "./knowledge-tree.js";
+import {
+  aiKeysFromEnv,
+  aiSettingsView,
+  discoverLocalAi,
+  isLocalEndpoint,
+  saveAiSettings,
+} from "./local-ai.js";
 import { readJson, resolveWithinRoot, writeAtomic } from "./paths.js";
 import { type ScanDiagnostic, scanSurfaces } from "./surfaces.js";
 import { TrailAdapter } from "./trail.js";
@@ -294,11 +336,16 @@ export class RepoSession implements ReinsApi {
       }
     }
 
-    const knowledgeFiles = await fg([`${this.config.knowledgeDir}/**/*.md`], {
-      cwd: this.root,
-      onlyFiles: true,
-      dot: true,
-      ignore: ["**/node_modules/**"],
+    const knowledgeFiles = (
+      await fg([`${this.config.knowledgeDir}/**/*.md`], {
+        cwd: this.root,
+        onlyFiles: true,
+        dot: true,
+        ignore: ["**/node_modules/**"],
+      })
+    ).filter((file) => {
+      const base = path.basename(file);
+      return !base.startsWith("_") && base !== "template.md";
     });
     const proposed = knowledgeFiles.filter((file) => file.includes("/inbox/")).length;
     const cached = await readCache<SurfaceCacheData>(this.root, SURFACE_CACHE);
@@ -320,7 +367,7 @@ export class RepoSession implements ReinsApi {
         fingerprint,
         ...(message ? { message } : {}),
       },
-      knowledge: { notes: knowledgeFiles.length, proposed, errors: 0 },
+      knowledge: { nodes: knowledgeFiles.length, proposed, errors: 0 },
       surfaces: { count: cached?.data.surfaces.length ?? 0, stale: surfacesStale },
     };
   }
@@ -1148,67 +1195,178 @@ export class RepoSession implements ReinsApi {
     });
   }
 
-  async listNotes(filter?: NoteFilter): Promise<NoteSummary[]> {
-    const loaded = await loadKnowledge(this.root, this.config.knowledgeDir);
-    let notes = loaded.notes;
-    if (filter?.type) notes = notes.filter((note) => note.type === filter.type);
-    if (filter?.status) notes = notes.filter((note) => note.status === filter.status);
-    if (filter?.tag) notes = notes.filter((note) => note.tags.includes(filter.tag as string));
-    if (filter?.query) {
-      const query = filter.query.toLowerCase();
-      notes = notes.filter(
-        (note) =>
-          note.title.toLowerCase().includes(query) ||
-          note.body.toLowerCase().includes(query) ||
-          note.tags.some((tag) => tag.toLowerCase().includes(query)),
+  async proposeNode(input: NodeProposal): Promise<NodeProposalResult> {
+    const loaded = await loadKnowledgeNodes(this.root, this.config.knowledgeDir);
+    return proposeNode(this.root, this.config.knowledgeDir, input, loaded);
+  }
+
+  async aiSettings(): Promise<AiSettings> {
+    return aiSettingsView(this.config);
+  }
+
+  async saveAiSettings(input: {
+    enabled: boolean;
+    provider?: string | null;
+    model?: string | null;
+    baseUrl?: string | null;
+  }): Promise<AiSettings> {
+    const view = await saveAiSettings(this.root, this.config, input);
+    this.config.llm.enabled = view.enabled;
+    this.config.llm.provider = view.provider;
+    this.config.llm.model = view.model;
+    this.config.llm.baseUrl = view.baseUrl;
+    return view;
+  }
+
+  async discoverAi(): Promise<LocalAiProvider[]> {
+    return discoverLocalAi();
+  }
+
+  async initKnowledge(template = "default"): Promise<{ created: string[]; kept: boolean }> {
+    const preset = getKnowledgeTemplatePreset(template);
+    return applyKnowledgeTemplate(this.root, this.config.knowledgeDir, preset);
+  }
+
+  async aiKnowledgeInit(req?: {
+    write?: boolean;
+    maxComponents?: number;
+    maxDrafts?: number;
+  }): Promise<KnowledgeAiResult> {
+    if (!this.config.llm.enabled) {
+      throw new ReinsError(
+        "LLM_DISABLED",
+        "AI knowledge init is off. Set llm.enabled to true in .reins/config.json.",
       );
     }
-    const limit = Math.min(Math.max(filter?.limit ?? 50, 1), 200);
-    return notes
-      .sort((a, b) => b.updated.localeCompare(a.updated) || a.id.localeCompare(b.id))
-      .slice(0, limit)
-      .map(noteSummary);
+    const model = this.config.llm.model;
+    if (!model) {
+      throw new ReinsError(
+        "LLM_DISABLED",
+        "Set llm.model in .reins/config.json before using AI knowledge init.",
+      );
+    }
+    const baseUrl = this.config.llm.baseUrl ?? "https://api.openai.com/v1";
+    const { apiKey } = aiKeysFromEnv();
+    if (!apiKey && !isLocalEndpoint(baseUrl)) {
+      throw new ReinsError(
+        "LLM_DISABLED",
+        "Set REINS_LLM_API_KEY (or OPENAI_API_KEY), or point llm.baseUrl at a local endpoint.",
+      );
+    }
+    const { plan } = await planKnowledgeBootstrap(
+      this.root,
+      this.config.knowledgeDir,
+      this.trail,
+      req?.maxComponents,
+    );
+    const loaded = await loadKnowledgeTree(this.root, this.config.knowledgeDir);
+    const templateRaw = loaded.templateText ?? defaultKnowledgeTemplate();
+    const { prompt, promptChars } = await buildKnowledgePrompt(this.root, plan, templateRaw);
+    const base = {
+      enabled: true,
+      model,
+      prompt,
+      promptChars,
+      drafts: [],
+      written: [],
+      skipped: [],
+    };
+    if (!req?.write) return base;
+    const raw = await requestAiDrafts(prompt, {
+      baseUrl,
+      model,
+      apiKey: apiKey ?? "",
+    });
+    const drafts = parseAiDrafts(raw, aiPlanComponents(plan), req.maxDrafts ?? 30);
+    const applied = await applyAiDrafts(this.root, this.config.knowledgeDir, drafts, model);
+    return { ...base, drafts, written: applied.written, skipped: applied.skipped };
   }
 
-  async getNote(id: string): Promise<KnowledgeNote> {
-    const loaded = await loadKnowledge(this.root, this.config.knowledgeDir);
-    const note = loaded.byId.get(id);
-    if (!note) throw new ReinsError("NOTE_INVALID", `Unknown note: ${id}`);
-    return note;
+  async knowledgeTree(): Promise<KnowledgeTree> {
+    const loaded = await loadKnowledgeTree(this.root, this.config.knowledgeDir);
+    return loaded.tree;
   }
 
-  async proposeNote(input: NoteProposal): Promise<NoteProposalResult> {
-    const loaded = await loadKnowledge(this.root, this.config.knowledgeDir);
-    return proposeNote(this.root, this.config.knowledgeDir, input, loaded);
+  async knowledgeNode(address: string): Promise<KnowledgeNode> {
+    return requireNode(this.root, this.config.knowledgeDir, address);
+  }
+
+  async saveKnowledgeNode(input: KnowledgeNodeInput): Promise<KnowledgeSaveResult> {
+    return saveKnowledgeNode(this.root, this.config.knowledgeDir, input);
+  }
+
+  async acceptKnowledgeNode(input: KnowledgeAcceptInput): Promise<KnowledgeSaveResult> {
+    return acceptKnowledgeNode(this.root, this.config.knowledgeDir, input);
+  }
+
+  async searchKnowledge(query: KnowledgeQuery): Promise<KnowledgeQueryResult> {
+    const result = await queryKnowledge(this.root, this.config.knowledgeDir, query);
+    const { index: _index, ...rest } = result;
+    return rest;
+  }
+
+  async knowledgeContext(codePath: string): Promise<KnowledgeContextPack> {
+    return knowledgeContext(this.root, this.config.knowledgeDir, codePath);
+  }
+
+  async knowledgeCoverage(): Promise<CoverageItem[]> {
+    const loaded = await loadKnowledgeTree(this.root, this.config.knowledgeDir);
+    return knowledgeCoverage(this.root, loaded.tree, loaded.nodes);
+  }
+
+  async bootstrapKnowledge(req?: {
+    maxComponents?: number;
+    write?: boolean;
+    dir?: string;
+  }): Promise<KnowledgeBootstrapResult> {
+    const { plan } = await planKnowledgeBootstrap(
+      this.root,
+      this.config.knowledgeDir,
+      this.trail,
+      req?.maxComponents,
+    );
+    if (!req?.write) return { ...plan, written: [] };
+    const loaded = await loadKnowledgeTree(this.root, this.config.knowledgeDir);
+    return applyKnowledgeBootstrap(this.root, this.config.knowledgeDir, plan, loaded.templateText);
+  }
+
+  async migrateKnowledge(req?: {
+    write?: boolean;
+    map?: Record<string, string>;
+  }): Promise<KnowledgeMigrationResult> {
+    return migrateKnowledge(this.root, this.config.knowledgeDir, req);
+  }
+
+  async knowledgeComments(address: string): Promise<KnowledgeCommentThread> {
+    return knowledgeComments(this.root, this.config.knowledgeDir, address);
+  }
+
+  async addKnowledgeComment(req: {
+    address: string;
+    body: string;
+  }): Promise<KnowledgeCommentThread> {
+    return addKnowledgeComment(this.root, this.config.knowledgeDir, req.address, req.body);
   }
 
   async check(req?: CheckRequest): Promise<CheckReport> {
-    const loaded = await loadKnowledge(this.root, this.config.knowledgeDir);
+    const loaded = await loadKnowledgeTree(this.root, this.config.knowledgeDir);
     const revision = await this.revision();
-    const items: CheckItem[] = [...loaded.errors];
+    const items: CheckItem[] = [...loaded.tree.errors];
     const scope = req?.scope ?? "knowledge";
 
-    for (const note of loaded.notes) {
-      if (
-        folderMismatch(note, this.config.knowledgeDir) &&
-        this.config.check.folderMismatch !== "off"
-      ) {
-        items.push({
-          code: "NOTE_FOLDER_MISMATCH",
-          severity: this.config.check.folderMismatch,
-          message: `Note type "${note.type}" belongs in ${this.config.knowledgeDir}/${folderForType(note.type)}/.`,
-          noteId: note.id,
-          path: note.path,
-        });
-      }
+    for (const note of loaded.nodes) {
       for (const link of note.links) {
         const target = linkTarget(link);
-        if (target.kind === "note" && !loaded.byId.has(target.value)) {
+        if (
+          target.kind === "node" &&
+          !loaded.loaded.byId.has(target.value) &&
+          !loaded.loaded.byAddress.has(target.value)
+        ) {
           items.push({
             code: "LINK_BROKEN",
             severity: "error",
-            message: `Note link target does not exist: ${target.value}`,
-            noteId: note.id,
+            message: `Node link target does not exist: ${target.value}`,
+            nodeId: note.id,
             path: note.path,
           });
         }
@@ -1220,7 +1378,7 @@ export class RepoSession implements ReinsApi {
               code: "LINK_BROKEN",
               severity: "error",
               message: `File link target does not exist: ${target.value}`,
-              noteId: note.id,
+              nodeId: note.id,
               path: note.path,
             });
           }
@@ -1228,10 +1386,27 @@ export class RepoSession implements ReinsApi {
       }
     }
 
+    if (scope !== "diff") {
+      const coverage = await knowledgeCoverage(this.root, loaded.tree, loaded.nodes);
+      for (const item of coverage) {
+        items.push({
+          code:
+            item.state === "stale"
+              ? "NODE_STALE"
+              : item.state === "unmapped"
+                ? "NODE_UNMAPPED"
+                : "NODE_ORPHAN",
+          severity: item.state === "unmapped" ? "info" : "warning",
+          message: item.message,
+          ...(item.path ? { path: item.path } : {}),
+        });
+      }
+    }
+
     if (scope === "knowledge+code" && this.config.check.verifyCodeLinks) {
       const surfacePage = await this.listSurfaces({ limit: 5000 });
       const surfaceIds = new Set(surfacePage.items.map((surface) => surface.id));
-      for (const note of loaded.notes) {
+      for (const note of loaded.nodes) {
         for (const link of note.links) {
           const target = linkTarget(link);
           if (target.kind === "surface" && !surfaceIds.has(target.value)) {
@@ -1239,14 +1414,14 @@ export class RepoSession implements ReinsApi {
               code: "SURFACE_UNKNOWN",
               severity: "warning",
               message: `Surface not found: ${target.value}`,
-              noteId: note.id,
+              nodeId: note.id,
               path: note.path,
             });
           }
         }
       }
       const skeletonCache = new Map<string, Set<string>>();
-      for (const note of loaded.notes) {
+      for (const note of loaded.nodes) {
         for (const link of note.links) {
           const target = linkTarget(link);
           if (target.kind !== "symbol") continue;
@@ -1256,7 +1431,7 @@ export class RepoSession implements ReinsApi {
               code: "SYMBOL_UNKNOWN",
               severity: "error",
               message: `Invalid symbol link: ${target.value}`,
-              noteId: note.id,
+              nodeId: note.id,
               path: note.path,
             });
             continue;
@@ -1276,7 +1451,7 @@ export class RepoSession implements ReinsApi {
               code: "SYMBOL_UNKNOWN",
               severity: "warning",
               message: `Symbol not found in the graph: ${target.value}`,
-              noteId: note.id,
+              nodeId: note.id,
               path: note.path,
             });
           }
@@ -1286,7 +1461,7 @@ export class RepoSession implements ReinsApi {
 
     if (scope === "diff") {
       const diff = await this.diff({ range: { mode: "working" } });
-      for (const note of loaded.notes) {
+      for (const note of loaded.nodes) {
         if (note.type !== "constraint" || note.status !== "accepted") continue;
         const rule = note.frontmatter.rule as
           | { kind: "forbidden-import"; from: string; to: string }
@@ -1297,7 +1472,7 @@ export class RepoSession implements ReinsApi {
             code: "CONSTRAINT_SKIPPED",
             severity: "info",
             message: `Constraint ${note.id} has no machine-checkable rule.`,
-            noteId: note.id,
+            nodeId: note.id,
           });
           continue;
         }
@@ -1314,7 +1489,7 @@ export class RepoSession implements ReinsApi {
                   code: "CONSTRAINT_VIOLATED",
                   severity: "error",
                   message: `Constraint ${note.id}: ${file.path} imports ${rule.to}.`,
-                  noteId: note.id,
+                  nodeId: note.id,
                   path: file.path,
                 });
               }
@@ -1328,7 +1503,7 @@ export class RepoSession implements ReinsApi {
                 code: "CONSTRAINT_VIOLATED",
                 severity: "error",
                 message: `Constraint ${note.id}: ${file.path} calls ${rule.callee}.`,
-                noteId: note.id,
+                nodeId: note.id,
                 path: file.path,
               });
             }
@@ -1356,12 +1531,12 @@ export class RepoSession implements ReinsApi {
         );
       }),
       summary,
-      revision: { ...revision, knowledgeHash: loaded.hash },
+      revision: { ...revision, knowledgeHash: loaded.loaded.hash },
     };
   }
 
   async harnessPack(req: PackRequest): Promise<HarnessPack> {
-    const loaded = await loadKnowledge(this.root, this.config.knowledgeDir);
+    const loaded = await loadKnowledgeTree(this.root, this.config.knowledgeDir);
     const revision = await this.revision();
     const surfaces = (await this.listSurfaces({ query: req.intent, limit: 20 })).items;
     const symbols = await this.searchSymbols(req.intent, { limit: 20 });
@@ -1379,14 +1554,14 @@ export class RepoSession implements ReinsApi {
     return composeHarnessPack({
       repoName: path.basename(this.root),
       revision,
-      knowledgeHash: loaded.hash,
+      knowledgeHash: loaded.loaded.hash,
       request: req,
       surfaces,
       symbols,
-      notes: loaded.notes,
+      nodes: loaded.nodes,
       commands,
       excluded: [
-        `${Math.max(loaded.notes.length - 20, 0)} notes below the relevance threshold`,
+        `${Math.max(loaded.nodes.length - 20, 0)} nodes below the relevance threshold`,
         `${Math.max(symbols.length - 20, 0)} symbols below the relevance threshold`,
       ],
     });
@@ -1419,7 +1594,14 @@ export class RepoSession implements ReinsApi {
       await writeAtomic(this.root, ".reins/.gitignore", ".cache/\n");
       created.push(".reins/.gitignore");
     }
-    for (const folder of ["specs", "decisions", "constraints", "howto", "questions", "inbox"]) {
+    const templatePath = `${this.config.knowledgeDir}/template.md`;
+    try {
+      await fs.access(resolveWithinRoot(this.root, templatePath));
+    } catch {
+      await writeAtomic(this.root, templatePath, defaultKnowledgeTemplate());
+      created.push(templatePath);
+    }
+    for (const folder of ["components", "inbox"]) {
       const relative = `${this.config.knowledgeDir}/${folder}`;
       try {
         await fs.access(resolveWithinRoot(this.root, relative));

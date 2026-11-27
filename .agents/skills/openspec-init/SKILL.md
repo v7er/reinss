@@ -109,10 +109,10 @@ If the human cannot state the project purpose, stop. An empty knowledge base is 
 
    ```bash
    reins spec
-   reins notes
+   reinss ask "openspec"
    ```
 
-   `reins spec` lists `openspec/config.yaml`, `openspec/specs/**/spec.md`, and `openspec/changes/**/{proposal,design,tasks,spec}.md`. `reins notes` shows them with `source: openspec`.
+   `reins spec` lists `openspec/config.yaml`, `openspec/specs/**/spec.md`, and `openspec/changes/**/{proposal,design,tasks,spec}.md`. `reinss ask "openspec"` searches them with `source: openspec`.
 
 ## Stop conditions
 

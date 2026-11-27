@@ -56,7 +56,7 @@ export function RepoStatus({ compact = false }: RepoStatusProps) {
       {!compact ? (
         <>
           <Text size="xs" c="dimmed">
-            {status.knowledge.notes} notes
+            {status.knowledge.nodes} nodes
           </Text>
           <Text size="xs" c="dimmed">
             {status.surfaces.count} surfaces

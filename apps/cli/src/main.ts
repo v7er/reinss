@@ -5,10 +5,16 @@ import {
   contractVersion,
   type DiffRange,
   isReinsError,
-  type NoteProposal,
-  type NoteType,
+  type NodeProposal,
+  type NodeType,
 } from "@reinss/core";
-import { createSession, listOpenSpecFiles, realRoot, startMcpServer } from "@reinss/node";
+import {
+  createSession,
+  knowledgeTemplatePresets,
+  listOpenSpecFiles,
+  realRoot,
+  startMcpServer,
+} from "@reinss/node";
 import { Command } from "commander";
 
 const program = new Command();
@@ -40,9 +46,10 @@ function fail(err: unknown): never {
     code === "TRAIL_TIMEOUT" ||
     code === "TRAIL_MISSING_GRAFT" ||
     code === "GIT_MISSING" ||
-    code === "GIT_FAILED"
+    code === "GIT_FAILED" ||
+    code === "GRAPH_MISSING"
       ? 2
-      : code === "GRAPH_TRUNCATED" || code === "TRAIL_OUTPUT_LIMIT"
+      : code === "GRAPH_TRUNCATED" || code === "TRAIL_OUTPUT_LIMIT" || code === "KNOWLEDGE_LIMIT"
         ? 3
         : code === "INTERNAL" || code === "DIFF_WORKER_FAILED"
           ? 4
@@ -67,7 +74,7 @@ function printStatus(
     `git       ${status.git.head?.slice(0, 8) ?? "none"}${status.git.dirty ? " (dirty)" : ""}\n`,
   );
   process.stdout.write(
-    `knowledge ${status.knowledge.notes} notes, ${status.knowledge.proposed} proposed\n`,
+    `knowledge ${status.knowledge.nodes} nodes, ${status.knowledge.proposed} proposed\n`,
   );
   process.stdout.write(
     `surfaces  ${status.surfaces.count}${status.surfaces.stale ? " (stale)" : ""}\n`,
@@ -797,55 +804,6 @@ git
   });
 
 program
-  .command("notes")
-  .argument("[dir]", "repository root", ".")
-  .option("--json", "machine-readable output")
-  .option("--query <text>", "text filter")
-  .option("--type <type>", "note type")
-  .option("--status <status>", "note status")
-  .action(
-    async (
-      dir: string,
-      opts: { json?: boolean; query?: string; type?: string; status?: string },
-    ) => {
-      try {
-        const session = await sessionFor(dir);
-        const notes = await session.listNotes({
-          ...(opts.query ? { query: opts.query } : {}),
-          ...(opts.type ? { type: opts.type as never } : {}),
-          ...(opts.status ? { status: opts.status as never } : {}),
-        });
-        if (opts.json) ok(notes);
-        else {
-          for (const note of notes) {
-            process.stdout.write(
-              `${note.id.padEnd(36)} ${note.type.padEnd(10)} ${note.status.padEnd(10)} ${note.title}\n`,
-            );
-          }
-        }
-      } catch (err) {
-        fail(err);
-      }
-    },
-  );
-
-program
-  .command("note")
-  .argument("<id>")
-  .argument("[dir]", "repository root", ".")
-  .option("--json", "machine-readable output")
-  .action(async (id: string, dir: string, opts: { json?: boolean }) => {
-    try {
-      const session = await sessionFor(dir);
-      const note = await session.getNote(id);
-      if (opts.json) ok(note);
-      else process.stdout.write(`${note.title}\n\n${note.body}\n`);
-    } catch (err) {
-      fail(err);
-    }
-  });
-
-program
   .command("propose")
   .argument("<title>")
   .argument("[dir]", "repository root", ".")
@@ -864,13 +822,13 @@ program
         const body = opts.bodyFile
           ? await fs.readFile(path.resolve(opts.bodyFile), "utf8")
           : (opts.body ?? "");
-        const proposal: NoteProposal = {
-          type: opts.type as NoteType,
+        const proposal: NodeProposal = {
+          type: opts.type as NodeType,
           title,
           body,
           source: { kind: "manual" },
         };
-        const result = await session.proposeNote(proposal);
+        const result = await session.proposeNode(proposal);
         if (opts.json) ok(result);
         else process.stdout.write(`${result.path}\n${result.diff}\n`);
       } catch (err) {
@@ -936,6 +894,446 @@ program
       if (opts.json) ok({ files });
       else
         process.stdout.write(files.length ? `${files.join("\n")}\n` : "No OpenSpec files found.\n");
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+function slugify(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 64) || "node"
+  );
+}
+
+const knowledge = program
+  .command("knowledge")
+  .description("Create, read, search, check, and migrate knowledge nodes");
+
+knowledge
+  .command("init")
+  .description("Create the knowledge template, or propose a component tree from code")
+  .argument("[dir]", "repository root", ".")
+  .option("--from-code", "propose components from the Trail graph")
+  .option("--ai", "use the configured model to draft nodes from code and specs")
+  .option("--template <id>", "built-in template: default, minimal, c4, domain", "default")
+  .option("--list-templates", "list built-in templates and exit")
+  .option("--write", "write the plan (default is preview)")
+  .option("--dry-run", "preview only")
+  .option("--max-components <n>", "component cap", "50")
+  .option("--max-drafts <n>", "AI draft cap", "30")
+  .option("--json", "machine-readable output")
+  .action(
+    async (
+      dir: string,
+      opts: {
+        fromCode?: boolean;
+        ai?: boolean;
+        template: string;
+        listTemplates?: boolean;
+        write?: boolean;
+        dryRun?: boolean;
+        maxComponents: string;
+        maxDrafts: string;
+        json?: boolean;
+      },
+    ) => {
+      try {
+        if (opts.listTemplates) {
+          if (opts.json)
+            ok(
+              knowledgeTemplatePresets.map(({ id, name, description }) => ({
+                id,
+                name,
+                description,
+              })),
+            );
+          else {
+            for (const preset of knowledgeTemplatePresets) {
+              process.stdout.write(
+                `${preset.id.padEnd(10)} ${preset.name} - ${preset.description}\n`,
+              );
+            }
+          }
+          return;
+        }
+        const session = await sessionFor(dir);
+        const created = await session.initKnowledge(opts.template);
+        if (!opts.fromCode) {
+          const result = created;
+          if (opts.json) ok(result);
+          else {
+            process.stdout.write(
+              result.created.length
+                ? `created:\n${result.created.map((item) => `  ${item}`).join("\n")}\n`
+                : "Knowledge template already present.\n",
+            );
+          }
+          return;
+        }
+        const write = Boolean(opts.write) && !opts.dryRun;
+        if (opts.ai) {
+          const ai = await session.aiKnowledgeInit({
+            write,
+            maxComponents: Number(opts.maxComponents),
+            maxDrafts: Number(opts.maxDrafts),
+          });
+          if (opts.json) {
+            ok(ai);
+            return;
+          }
+          process.stdout.write(
+            `${write ? "AI wrote" : "AI prompt preview"} ${ai.promptChars} chars, model ${ai.model}\n`,
+          );
+          if (!write) {
+            process.stdout.write(`${ai.prompt.slice(0, 2_000)}\n`);
+            process.stdout.write("Preview only. Re-run with --write to send this to the model.\n");
+            return;
+          }
+          process.stdout.write(
+            `${ai.drafts.length} drafts, ${ai.written.length} written, ${ai.skipped.length} skipped\n`,
+          );
+          for (const file of ai.written) process.stdout.write(`  ${file}\n`);
+          for (const skip of ai.skipped) process.stdout.write(`  skip ${skip}\n`);
+          return;
+        }
+        const plan = await session.bootstrapKnowledge({
+          maxComponents: Number(opts.maxComponents),
+          write,
+        });
+        if (opts.json) {
+          ok(plan);
+          return;
+        }
+        process.stdout.write(
+          `${write ? "wrote" : "preview"} ${plan.components.length} components\n`,
+        );
+        for (const component of plan.components) {
+          process.stdout.write(
+            `  ${component.component.padEnd(40)} ${component.code} (${component.files} files)\n`,
+          );
+        }
+        for (const skipped of plan.skipped) {
+          process.stdout.write(`  skip ${skipped.path}: ${skipped.reason}\n`);
+        }
+        if (plan.written.length) process.stdout.write(`created ${plan.written.length} files\n`);
+        if (!write)
+          process.stdout.write("Preview only. Re-run with --write to create the nodes.\n");
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
+
+knowledge
+  .command("new")
+  .description("Create or update a node")
+  .argument("[dir]", "repository root", ".")
+  .requiredOption("--title <title>", "node title")
+  .requiredOption("--type <type>", "spec, decision, constraint, howto, or question")
+  .option("--component <path>", "component directory, for example components/billing")
+  .option("--address <address>", "full node address")
+  .option("--body <text>", "node body")
+  .option("--body-file <path>", "read the body from a file")
+  .option("--json", "machine-readable output")
+  .action(
+    async (
+      dir: string,
+      opts: {
+        title: string;
+        type: string;
+        component?: string;
+        address?: string;
+        body?: string;
+        bodyFile?: string;
+        json?: boolean;
+      },
+    ) => {
+      try {
+        const session = await sessionFor(dir);
+        const body = opts.bodyFile
+          ? await fs.readFile(path.resolve(opts.bodyFile), "utf8")
+          : opts.body;
+        if (!body) throw new Error("A node body is required: --body or --body-file.");
+        const component = opts.component ?? "components";
+        const address = opts.address ?? `${component}/${slugify(opts.title)}`;
+        const result = await session.saveKnowledgeNode({
+          address,
+          title: opts.title,
+          type: opts.type as NodeType,
+          body,
+          ...(opts.component ? { component: opts.component } : {}),
+        });
+        if (opts.json) ok(result);
+        else process.stdout.write(`${result.address}\n${result.diff}\n`);
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
+
+knowledge
+  .command("get")
+  .description("Read one node by address")
+  .argument("<address>")
+  .argument("[dir]", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (address: string, dir: string, opts: { json?: boolean }) => {
+    try {
+      const session = await sessionFor(dir);
+      const node = await session.knowledgeNode(address);
+      if (opts.json) ok(node);
+      else process.stdout.write(`${node.title}\n${node.path}\n\n${node.body}\n`);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+knowledge
+  .command("accept")
+  .description("Accept a proposed node and move it to a component")
+  .argument("<address>")
+  .argument("[dir]", "repository root", ".")
+  .requiredOption("--component <path>", "destination component")
+  .option("--json", "machine-readable output")
+  .action(async (address: string, dir: string, opts: { component: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(dir);
+      const result = await session.acceptKnowledgeNode({
+        address,
+        component: opts.component,
+      });
+      if (opts.json) ok(result);
+      else process.stdout.write(`${result.address}\n${result.diff}\n`);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+knowledge
+  .command("search")
+  .description("Search nodes by meaning")
+  .argument("<query>")
+  .argument("[dir]", "repository root", ".")
+  .option("--type <type>", "filter by node type")
+  .option("--component <path>", "filter by component")
+  .option("--limit <n>", "result limit", "10")
+  .option("--json", "machine-readable output")
+  .action(
+    async (
+      query: string,
+      dir: string,
+      opts: { type?: string; component?: string; limit: string; json?: boolean },
+    ) => {
+      try {
+        const session = await sessionFor(dir);
+        const result = await session.searchKnowledge({
+          query,
+          limit: Number(opts.limit),
+          ...(opts.type ? { type: opts.type as NodeType } : {}),
+          ...(opts.component ? { component: opts.component } : {}),
+        });
+        if (opts.json) ok(result);
+        else {
+          for (const hit of result.items) {
+            process.stdout.write(
+              `${hit.score.toFixed(2).padStart(6)}  ${hit.type.padEnd(10)} ${hit.address}\n`,
+            );
+            process.stdout.write(`        ${hit.excerpt}\n`);
+          }
+          process.stdout.write(
+            `${result.total} matches, ${result.tookMs} ms, filter: ${result.filter.reason}\n`,
+          );
+        }
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
+
+knowledge
+  .command("context")
+  .description("Context pack for a repository-relative code path")
+  .argument("<path>")
+  .argument("[dir]", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (codePath: string, dir: string, opts: { json?: boolean }) => {
+    try {
+      const session = await sessionFor(dir);
+      const pack = await session.knowledgeContext(codePath);
+      if (opts.json) ok(pack);
+      else {
+        process.stdout.write(
+          `${pack.unmapped ? "unmapped" : pack.component}: ${pack.estimatedTokens} tokens${
+            pack.truncated ? " (truncated)" : ""
+          }\n`,
+        );
+        for (const item of pack.items) {
+          process.stdout.write(`${item.kind.padEnd(8)} ${item.path}\n  ${item.reason}\n`);
+        }
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+knowledge
+  .command("check")
+  .description("Validate the knowledge tree and coverage")
+  .argument("[dir]", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .option("--strict", "treat warnings as failures")
+  .action(async (dir: string, opts: { json?: boolean; strict?: boolean }) => {
+    try {
+      const session = await sessionFor(dir);
+      const report = await session.check({ scope: "knowledge", strict: opts.strict ?? false });
+      if (opts.json) ok(report);
+      else {
+        for (const item of report.items) {
+          process.stdout.write(`${item.severity.padEnd(7)} ${item.code}  ${item.message}\n`);
+        }
+        process.stdout.write(
+          `${report.ok ? "ok" : "failed"}: ${report.summary.error} errors, ${report.summary.warning} warnings\n`,
+        );
+      }
+      if (!report.ok) process.exit(1);
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+knowledge
+  .command("coverage")
+  .description("Coverage per component")
+  .argument("[dir]", "repository root", ".")
+  .option("--json", "machine-readable output")
+  .action(async (dir: string, opts: { json?: boolean }) => {
+    try {
+      const session = await sessionFor(dir);
+      const items = await session.knowledgeCoverage();
+      if (opts.json) ok(items);
+      else {
+        for (const item of items) {
+          process.stdout.write(
+            `${item.state.padEnd(9)} ${item.component.padEnd(32)} ${item.message}\n`,
+          );
+        }
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+knowledge
+  .command("migrate")
+  .description("Move flat type folders into component directories")
+  .argument("[dir]", "repository root", ".")
+  .option("--write", "apply the moves")
+  .option("--map <pair...>", "old=new component mapping")
+  .option("--json", "machine-readable output")
+  .action(async (dir: string, opts: { write?: boolean; map?: string[]; json?: boolean }) => {
+    try {
+      const session = await sessionFor(dir);
+      const map: Record<string, string> = {};
+      for (const pair of opts.map ?? []) {
+        const [from, to] = pair.split("=");
+        if (from && to) map[from] = to;
+      }
+      const plan = await session.migrateKnowledge({ write: opts.write, map });
+      if (opts.json) ok(plan);
+      else {
+        for (const move of plan.moves) process.stdout.write(`${move.from} -> ${move.to}\n`);
+        for (const file of plan.unresolved) process.stdout.write(`unresolved ${file}\n`);
+        if (!opts.write) process.stdout.write("Preview only. Re-run with --write.\n");
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+knowledge
+  .command("comment")
+  .description("List or add a node comment stored in git notes")
+  .argument("<address>")
+  .argument("[dir]", "repository root", ".")
+  .option("--body <text>", "add a comment")
+  .option("--json", "machine-readable output")
+  .action(async (address: string, dir: string, opts: { body?: string; json?: boolean }) => {
+    try {
+      const session = await sessionFor(dir);
+      const thread = opts.body
+        ? await session.addKnowledgeComment({ address, body: opts.body })
+        : await session.knowledgeComments(address);
+      if (opts.json) ok(thread);
+      else {
+        for (const comment of thread.comments) {
+          process.stdout.write(`${comment.at} ${comment.author}\n  ${comment.body}\n`);
+        }
+        if (!thread.comments.length) process.stdout.write("No comments.\n");
+        if (opts.body) {
+          process.stdout.write("Share with the team: git push origin refs/notes/reins\n");
+        }
+        if (!thread.refAvailable) process.stdout.write("No refs/notes/reins in this repository.\n");
+      }
+    } catch (err) {
+      fail(err);
+    }
+  });
+
+program
+  .command("ask")
+  .description("Ask the knowledge tree a question")
+  .argument("<question>")
+  .argument("[dir]", "repository root", ".")
+  .option("--type <type>", "filter by node type")
+  .option("--component <path>", "filter by component")
+  .option("--limit <n>", "result limit", "10")
+  .option("--json", "machine-readable output")
+  .action(
+    async (
+      question: string,
+      dir: string,
+      opts: { type?: string; component?: string; limit: string; json?: boolean },
+    ) => {
+      try {
+        const session = await sessionFor(dir);
+        const result = await session.searchKnowledge({
+          query: question,
+          limit: Number(opts.limit),
+          ...(opts.type ? { type: opts.type as NodeType } : {}),
+          ...(opts.component ? { component: opts.component } : {}),
+        });
+        if (opts.json) ok(result);
+        else {
+          for (const hit of result.items) {
+            process.stdout.write(
+              `${hit.score.toFixed(2).padStart(6)}  ${hit.type.padEnd(10)} ${hit.address}\n        ${hit.excerpt}\n`,
+            );
+          }
+          process.stdout.write(
+            `${result.total} matches, ${result.tookMs} ms, filter: ${result.filter.reason}\n`,
+          );
+        }
+      } catch (err) {
+        fail(err);
+      }
+    },
+  );
+
+program
+  .command("studio")
+  .description("Open the knowledge studio")
+  .argument("[dir]", "repository root", ".")
+  .action(async (dir: string) => {
+    try {
+      const session = await sessionFor(dir);
+      process.stdout.write(`Studio for ${session.root}\n`);
+      process.stdout.write("Start the desktop app with: pnpm dev\n");
+      process.stdout.write("Then open Knowledge and select the Studio tab.\n");
     } catch (err) {
       fail(err);
     }

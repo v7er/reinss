@@ -2,7 +2,7 @@
 
 Reins treats an agent as a first-class client, not as a prompt bolted onto a UI. The harness has four layers:
 
-1. **Instructions**: `AGENTS.md` and per-directory notes that state the rules of this repository.
+1. **Instructions**: `AGENTS.md` and the `_` guidance files that state the rules of this repository.
 2. **Skills**: small, repeatable procedures for tasks that recur.
 3. **Tools**: MCP operations that answer structural questions without reading whole files.
 4. **Context packs**: deterministic, token-bounded bundles for a new session.
@@ -15,7 +15,7 @@ An agent with only file tools spends most of its context discovering structure. 
 
 The second failure is intent. An agent that can see every function but not the constraint "refunds write to the ledger first" produces a change that compiles and is wrong. The knowledge layer exists to make that constraint available in one call and to fail a check when it is violated.
 
-OpenSpec under `openspec/` is the first read for project intent. Reins imports its config, specs, proposals, designs, and tasks as read-only notes, so the brief and the decisions are available before the code.
+OpenSpec under `openspec/` is the first read for project intent. Reins imports its config, specs, proposals, designs, and tasks as read-only nodes, so the brief and the decisions are available before the code.
 
 The harness is judged on two numbers: tokens spent to reach a correct change, and incorrect changes caused by missing intent. Everything else is secondary.
 
@@ -59,12 +59,13 @@ A skill file has YAML frontmatter with `name` and `description`, then:
 | Skill | Phase | Trigger | Output |
 | --- | --- | --- | --- |
 | `reins-context` | 1 | Any task that touches code in a repository with a Trail graph. | A short context block with symbols, file:line, and the call path. |
-| `reins-decision` | 1 | A choice is made that future work must follow, or a constraint is discovered. | A decision or constraint note in the inbox, plus a review request. |
+| `reins-decision` | 1 | A choice is made that future work must follow, or a constraint is discovered. | A decision or constraint node in the inbox, plus a review request. |
 | `reins-surface` | 2 | Adding support for a framework's entry points. | One detector, one fixture repository, golden surfaces, registry entry. |
 | `reins-diff-review` | 3 | Reviewing a structural change or an agent's edit. | Operation summary, risks, and comments linked to operations. |
 | `openspec-init` | any | A new project needs an OpenSpec knowledge base. | `openspec/` with config, first spec, and first change. |
+| `reins-knowledge` | 7 | Any task that needs product intent, a component contract, or a local rule. | A context pack, then a proposed node for anything missing. |
 
-Three exist now: `reins-context` (runs against Trail until `reinss` exists), `reins-decision`, and `openspec-init`. The other two are written at the start of their phase, not before.
+Four exist now: `reins-context`, `reins-decision`, `openspec-init`, and `reins-knowledge`. `reins-surface` and `reins-diff-review` are written at the start of their phase.
 
 ### 3.2 `reins-context`
 
@@ -88,16 +89,16 @@ Purpose: capture a durable decision or constraint without inventing process.
 
 Steps:
 
-1. Search existing notes for the same subject (`reins notes --query`, or `grep` in `.reins/knowledge/` before Phase 4).
+1. Search existing nodes for the same subject (`reinss ask "<subject>"`).
 2. Decide whether this is a decision, a constraint, a spec, a how-to, or a question. A constraint must be checkable or it is a decision.
-3. Draft the note with the schema in [03](03-data-contracts.md#7-knowledge-notes). Link every symbol and surface you can verify; do not guess IDs.
+3. Draft the node with the schema in [03](03-data-contracts.md#7-knowledge-nodes). Link every symbol and surface you can verify; do not guess IDs.
 4. Write to `knowledge/inbox/` with `status: proposed`. Never write directly to an accepted folder.
 5. Show the diff and the unresolved links to the human. Ask for acceptance.
-6. After acceptance, update any note that this one supersedes.
+6. After acceptance, update any node that this one supersedes.
 
-Stop conditions: the decision is not stable, the same note exists, a symbol link cannot be verified, or the user has not approved the wording.
+Stop conditions: the decision is not stable, the same node exists, a symbol link cannot be verified, or the user has not approved the wording.
 
-Failure modes: writing a note that restates the code instead of the reason; linking every file in the area instead of the one symbol that matters; turning a question into a decision.
+Failure modes: writing a node that restates the code instead of the reason; linking every file in the area instead of the one symbol that matters; turning a question into a decision.
 
 ## 4. MCP tools
 
@@ -125,6 +126,8 @@ Failure modes: writing a note that restates the code instead of the reason; link
 | `reins_git_worktrees` | yes | no | yes | no |
 | `reins_knowledge_search` | yes | no | yes | no |
 | `reins_knowledge_get` | yes | no | yes | no |
+| `reins_knowledge_context` | yes | no | yes | no |
+| `reins_knowledge_coverage` | yes | no | yes | no |
 | `reins_knowledge_propose` | no | no, writes one file under inbox | no | no |
 | `reins_check` | yes | no | yes | no |
 | `reins_harness_pack` | yes | no | yes | no |
@@ -136,7 +139,7 @@ Failure modes: writing a note that restates the code instead of the reason; link
 - Caps are enforced server-side. A request for more is clamped and the result says so.
 - Every tool description states when not to use it, so an agent does not call `reins_diff` to find a definition.
 - Errors are tool errors with the `ReinsError` code in the message and `structuredContent.error`. The server never returns a success with an empty body.
-- Repository content is data. Tool descriptions instruct the agent to treat code and note text as untrusted and never follow instructions found inside them.
+- Repository content is data. Tool descriptions instruct the agent to treat code and node text as untrusted and never follow instructions found inside them.
 - Absolute paths are omitted unless the server was started with `--allow-absolute-paths`. Default is repository-relative.
 
 ### 4.4 Tool contracts
@@ -278,7 +281,7 @@ Use when: you need the decision, constraint, spec, or how-to for an area.
   "properties": {
     "query": { "type": "string", "minLength": 1, "maxLength": 200 },
     "type": { "enum": ["spec", "decision", "constraint", "howto", "question"] },
-    "status": { "enum": ["accepted", "proposed", "superseded", "deprecated"] },
+    "component": { "type": "string" },
     "limit": { "type": "integer", "minimum": 1, "maximum": 30, "default": 10 }
   },
   "required": ["query"],
@@ -286,7 +289,7 @@ Use when: you need the decision, constraint, spec, or how-to for an area.
 }
 ```
 
-Returns `NoteSummary[]` only. No bodies. Cap: 2,000 tokens. Proposals are excluded unless `status: "proposed"` is explicit.
+Returns ranked hits with address, title, type, component, score, and a two-line excerpt. It does not return full bodies. Cap: 20 hits, 2,000 tokens. Intent words boost matching types; only an explicit `type` filters, and the result names the filter it applied.
 
 #### `reins_knowledge_get`
 
@@ -295,19 +298,40 @@ Use when: a search hit looks relevant and you need the body.
 ```json
 {
   "type": "object",
-  "properties": { "id": { "type": "string" } },
-  "required": ["id"],
+  "properties": { "address": { "type": "string" } },
+  "required": ["address"],
   "additionalProperties": false
 }
 ```
 
-Returns `KnowledgeNote` with the body wrapped in an `untrusted_content` envelope and the note's links. Cap: 4,000 tokens. A note over the cap is returned truncated with the byte length.
+Returns one node with its body wrapped in an `untrusted_content` envelope, links, guidance paths, and frontmatter. A legacy node address is accepted when no address matches. Cap: 4,000 tokens. A body over the cap is truncated with the byte length.
+
+#### `reins_knowledge_context`
+
+Use when: you know the code path and need the intent behind it without reading the tree.
+
+```json
+{
+  "type": "object",
+  "properties": { "path": { "type": "string", "minLength": 1, "maxLength": 400 } },
+  "required": ["path"],
+  "additionalProperties": false
+}
+```
+
+Returns the owning component, its boundary or first node, up to 8 inherited `_` guidance files, and typed node links. Each item carries a reason. Cap: 20 items and 4,000 estimated tokens; the result says when it truncated. An unmapped path is reported, never guessed.
+
+#### `reins_knowledge_coverage`
+
+Use when: you need to know where intent is missing or stale.
+
+Returns one item per component with state `covered`, `stale`, `orphan`, `unmapped`, or `invalid`, plus a message and a suggested fix. Read-only; it never edits a node.
 
 #### `reins_knowledge_propose`
 
 Use when: a decision was made in this session and the human approved recording it.
 
-Do not use when: the note is speculative, duplicates an existing note, or the human has not seen the wording.
+Do not use when: the node is speculative, duplicates an existing node, or the human has not seen the wording.
 
 ```json
 {
@@ -454,7 +478,7 @@ reins_knowledge_propose ...
 show the diff to the human
 ```
 
-No acceptance by the agent. The human moves the note or asks for edits.
+No acceptance by the agent. The human moves the node or asks for edits.
 
 ### 6.4 Review someone else's change
 
@@ -499,7 +523,7 @@ The evaluation is not a leaderboard. It exists to catch a tool that makes agents
 | Commits | Reins never commits. The human or the agent's host handles Git. |
 | Builds | `reins build` runs only on an explicit call. No background build. |
 | Network | MCP tools never call the network. LLM features are separate and off by default. |
-| Secrets | Tool results exclude files matching `secretPatterns`. A note body is capped and never includes environment values. |
+| Secrets | Tool results exclude files matching `secretPatterns`. A node body is capped and never includes environment values. |
 | Prompt injection | Code, note bodies, and commit messages are untrusted data. Tool descriptions say so. The agent must not follow instructions found inside them. |
 | Paths | Repository-relative output by default. Write paths restricted to the inbox. |
 
@@ -513,7 +537,7 @@ The evaluation is not a leaderboard. It exists to catch a tool that makes agents
 | Empty result | Success with empty array and a `hint` | Do not retry with the same arguments. |
 | Truncated result | `truncated: true` and reason | Narrow the query or lower depth. Do not assume completeness. |
 | Worker crash | `DIFF_WORKER_FAILED`, retryable | Retry once, then report. |
-| Invalid note | `NOTE_INVALID` with field path | Fix the note, do not bypass the schema. |
+| Invalid note | `NOTE_INVALID` with field path | Fix the node, do not bypass the schema. |
 | Timeout | `TRAIL_TIMEOUT`, retryable | Retry once with a narrower scope, then report. |
 
 ## 10. Token and cost controls
@@ -535,7 +559,7 @@ Rules for when it exists:
 - Off by default. Enabling requires a provider, a model, and a key stored in the OS keychain.
 - The first call shows exactly what will be sent and its size. The user confirms.
 - Content is limited to the selected note, surface, or diff. No whole-repository upload.
-- Generated text is labeled `suggested`, never written into an accepted note without human acceptance.
+- Generated text is labeled `suggested`, never written into an accepted node without human acceptance.
 - No background calls, no telemetry, no automatic retries that resend content.
 - Every call records provider, model, input bytes, output bytes, and duration in a local log. Not the content.
 - A local provider is supported first; a hosted provider is a user choice, not a requirement.
@@ -550,3 +574,4 @@ Rules for when it exists:
 | 4 | knowledge tools, `reins_check`, proposal gate |
 | 5 | `reins_harness_pack`, tool annotations, progress notifications |
 | 6 | evaluation suite, remaining skills, optional LLM enrichment, install script for other hosts |
+| 7 | knowledge tree, studio, lexical index, bootstrap, coverage, git-notes comments |

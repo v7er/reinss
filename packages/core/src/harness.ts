@@ -1,11 +1,5 @@
-import type {
-  GraphRevision,
-  HarnessPack,
-  KnowledgeNote,
-  PackRequest,
-  Surface,
-  SymbolHit,
-} from "./types.js";
+import type { KnowledgeNode } from "./tree.js";
+import type { GraphRevision, HarnessPack, PackRequest, Surface, SymbolHit } from "./types.js";
 
 export interface HarnessInput {
   repoName: string;
@@ -14,12 +8,12 @@ export interface HarnessInput {
   request: PackRequest;
   surfaces: Surface[];
   symbols: SymbolHit[];
-  notes: KnowledgeNote[];
+  nodes: KnowledgeNode[];
   commands: string[];
   excluded: string[];
 }
 
-function estimateTokens(text: string): number {
+export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
@@ -65,7 +59,7 @@ export function composeHarnessPack(input: HarnessInput): HarnessPack {
     });
   }
 
-  const constraints = input.notes.filter((n) => n.type === "constraint" && n.status === "accepted");
+  const constraints = input.nodes.filter((n) => n.type === "constraint" && n.status === "accepted");
   if (constraints.length > 0) {
     sections.push({
       name: "Constraints",
@@ -76,7 +70,7 @@ export function composeHarnessPack(input: HarnessInput): HarnessPack {
     });
   }
 
-  const decisions = input.notes.filter((n) => n.type === "decision" && n.status === "accepted");
+  const decisions = input.nodes.filter((n) => n.type === "decision" && n.status === "accepted");
   if (decisions.length > 0) {
     sections.push({
       name: "Decisions",
@@ -87,7 +81,7 @@ export function composeHarnessPack(input: HarnessInput): HarnessPack {
     });
   }
 
-  const questions = input.notes.filter((n) => n.type === "question" && n.status !== "rejected");
+  const questions = input.nodes.filter((n) => n.type === "question" && n.status !== "rejected");
   if (questions.length > 0) {
     sections.push({
       name: "Open questions",

@@ -18,7 +18,7 @@ The system SHALL build the index only from markdown files under the knowledge di
 
 #### Scenario: Cache is not a store
 
-- **WHEN** the index exists and a note is edited outside Reins
+- **WHEN** the index exists and a node is edited outside Reins
 - **THEN** the next query reflects the edit
 - **AND** no answer depends on the cache alone
 
@@ -80,13 +80,14 @@ The system SHALL expand query terms with aliases from a committed file and SHALL
 
 ### Requirement: Route intent to node type
 
-The system SHALL detect requirement, decision, technical, rule, and open-question intent from query words, apply a default type filter, and allow the caller to override it.
+The system SHALL detect requirement, decision, technical, rule, and open-question intent from query words and SHALL rank matching types above other matches, while a caller-supplied type filters the result.
 
 #### Scenario: Asking why
 
 - **WHEN** the user asks "why do refunds write to the ledger first"
-- **THEN** decisions rank above other types
-- **AND** an explicit `--type spec` overrides the routing
+- **THEN** decisions rank above other matching types
+- **AND** a spec that matches still appears
+- **AND** an explicit `--type spec` returns specs only
 
 #### Scenario: No intent words
 

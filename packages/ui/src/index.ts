@@ -1,4 +1,5 @@
 export type { NavigationTarget, ReinsClient } from "@reinss/core";
+export { AiSettingsPanel, type AiSettingsPanelProps } from "./AiSettingsPanel.js";
 export { CodeViewer, type CodeViewerProps } from "./CodeViewer.js";
 export { useReins } from "./context.js";
 export { DiffViewer, type DiffViewerProps } from "./DiffViewer.js";
@@ -6,7 +7,7 @@ export { GitRefs, type GitRefsProps } from "./GitRefs.js";
 export { GitTreeViewer, type GitTreeViewerProps, LANE_COLORS } from "./GitTreeViewer.js";
 export { GraphView, type GraphViewProps } from "./GraphView.js";
 export { type GitTreeLayout, layoutGitTree } from "./gitTree.js";
-export { KnowledgeBoard, type KnowledgeBoardProps } from "./KnowledgeBoard.js";
+export { KnowledgeStudio, type KnowledgeStudioProps } from "./KnowledgeStudio.js";
 export { ReinsProvider, type ReinsProviderProps } from "./provider.js";
 export { RepoStatus, type RepoStatusProps } from "./RepoStatus.js";
 export { ReviewWorkspace, type ReviewWorkspaceProps } from "./ReviewWorkspace.js";

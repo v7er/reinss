@@ -228,7 +228,7 @@ describe("RepoSession surfaces", () => {
     const session = await createSession(dir);
     const first = await session.bootstrap();
     expect(first.created).toContain(".reins/config.json");
-    expect(first.created).toContain(".reins/knowledge/specs");
+    expect(first.created).toContain(".reins/knowledge/components");
     expect(existsSync(path.join(dir, ".reins/knowledge/inbox"))).toBe(true);
 
     const second = await session.bootstrap();

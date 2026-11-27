@@ -1,8 +1,8 @@
 import { z } from "zod";
-import type { LinkRel, NoteLink, NoteStatus, NoteType } from "./types.js";
+import type { LinkRel, NodeLink, NodeStatus, NodeType } from "./types.js";
 
-export const noteTypes = ["spec", "decision", "constraint", "howto", "question"] as const;
-export const noteStatuses = [
+export const nodeTypes = ["spec", "decision", "constraint", "howto", "question"] as const;
+export const nodeStatuses = [
   "proposed",
   "accepted",
   "superseded",
@@ -23,6 +23,7 @@ export const linkRels = [
 export const linkSchema = z
   .object({
     rel: z.enum(linkRels),
+    node: z.string().min(1).optional(),
     note: z.string().min(1).optional(),
     symbol: z.string().min(1).optional(),
     surface: z.string().min(1).optional(),
@@ -31,9 +32,10 @@ export const linkSchema = z
   })
   .refine(
     (value) =>
-      [value.note, value.symbol, value.surface, value.commit, value.file].filter(Boolean).length ===
-      1,
-    { message: "A link must have exactly one target: note, symbol, surface, commit, or file." },
+      [value.node, value.note, value.symbol, value.surface, value.commit, value.file].filter(
+        Boolean,
+      ).length === 1,
+    { message: "A link must have exactly one target: node, symbol, surface, commit, or file." },
   );
 
 export const constraintRuleSchema = z.discriminatedUnion("kind", [
@@ -53,10 +55,10 @@ const dateValue = z
   .union([z.string().min(1), z.date()])
   .transform((value) => (value instanceof Date ? value.toISOString().slice(0, 10) : value));
 
-export const noteFrontmatterSchema = z.object({
+export const nodeFrontmatterSchema = z.object({
   title: z.string().min(1).max(120),
-  type: z.enum(noteTypes),
-  status: z.enum(noteStatuses),
+  type: z.enum(nodeTypes),
+  status: z.enum(nodeStatuses),
   created: dateValue,
   updated: dateValue,
   owner: z.string().optional(),
@@ -67,42 +69,44 @@ export const noteFrontmatterSchema = z.object({
   supersededBy: z.string().optional(),
   rule: constraintRuleSchema.optional(),
   provenance: z.record(z.string(), z.unknown()).optional(),
+  component: z.string().optional(),
+  layer: z.string().optional(),
+  boundary: z.boolean().optional(),
+  code: z.string().optional(),
+  source: z.enum(["reins", "openspec"]).optional(),
 });
 
-export type NoteFrontmatter = z.infer<typeof noteFrontmatterSchema>;
+export type NodeFrontmatter = z.infer<typeof nodeFrontmatterSchema>;
 
-export function folderForType(type: NoteType): string {
-  return type === "howto" ? "howto" : `${type}s`;
-}
-
-export function noteIdFromTitle(title: string): string {
+export function nodeSlugFromTitle(title: string): string {
   const base = title
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 64);
-  return base.length >= 2 ? base : "note";
+  return base.length >= 2 ? base : "node";
 }
 
-export function linkTarget(link: NoteLink): { kind: string; value: string } {
-  if ("note" in link) return { kind: "note", value: link.note };
+export function linkTarget(link: NodeLink): { kind: string; value: string } {
+  if ("node" in link) return { kind: "node", value: link.node };
+  if ("note" in link) return { kind: "node", value: link.note };
   if ("symbol" in link) return { kind: "symbol", value: link.symbol };
   if ("surface" in link) return { kind: "surface", value: link.surface };
   if ("commit" in link) return { kind: "commit", value: link.commit };
   return { kind: "file", value: link.file };
 }
 
-export function isNoteLink(value: unknown): value is NoteLink {
+export function isNodeLink(value: unknown): value is NodeLink {
   return linkSchema.safeParse(value).success;
 }
 
-export function isNoteType(value: string): value is NoteType {
-  return (noteTypes as readonly string[]).includes(value);
+export function isNodeType(value: string): value is NodeType {
+  return (nodeTypes as readonly string[]).includes(value);
 }
 
-export function isNoteStatus(value: string): value is NoteStatus {
-  return (noteStatuses as readonly string[]).includes(value);
+export function isNodeStatus(value: string): value is NodeStatus {
+  return (nodeStatuses as readonly string[]).includes(value);
 }
 
 export function isLinkRel(value: string): value is LinkRel {

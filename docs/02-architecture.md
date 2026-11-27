@@ -22,6 +22,7 @@ This is the engineering contract for Reins. It defines the process model, packag
 ┌───────────────▼──────────────────────────────────────────────────────┐
 │ @reinss/core                                                          │
 │  config · errors · api types · surfaces · diff matcher · knowledge    │
+│  tree grammar · template · lexical index · intent routing             │
 │  link graph · check rules · harness pack composer                    │
 │  ports: ParserPort, ClockPort                                       │
 └───────────────┬──────────────────────────────────────────────────────┘
@@ -96,8 +97,8 @@ node  <-/-> ui        forbidden
 
 | Package | Owns | Must not |
 | --- | --- | --- |
-| `@reinss/core` | Types, validation, graph result shaping, surface types and IDs, diff types and operation helpers, knowledge schema and link rules, harness pack composer | Read files, spawn processes, import Node or Tauri, render React |
-| `@reinss/node` | Trail and Git adapters, AST parser and diff matcher, surface detectors, knowledge loader, path safety, cache files, `RepoSession`, `ReinsApi` implementation, MCP server bootstrap | Contain UI, duplicate domain rules from core |
+| `@reinss/core` | Types, validation, graph result shaping, surface types and IDs, diff types and operation helpers, knowledge schema and link rules, tree grammar and template parser, BM25 index and query rules, harness pack composer | Read files, spawn processes, import Node or Tauri, render React |
+| `@reinss/node` | Trail and Git adapters, AST parser and diff matcher, surface detectors, knowledge tree loader, index cache, coverage, bootstrap, migration, Git-notes comments, path safety, `RepoSession`, `ReinsApi` implementation, MCP server bootstrap | Contain UI, duplicate domain rules from core |
 | `@reinss/ui` | React components, Mantine theme and tokens, keyboard behavior, view state, client interface consumption | Touch the filesystem, spawn processes, import `@reinss/node` |
 | `apps/cli` | Argument parsing, exit codes, text rendering, MCP stdio wiring | Query logic, diff logic, knowledge parsing |
 | `apps/desktop` | Tauri window, native dialog, sidecar lifecycle, renderer layout | Query logic, second graph store |
@@ -187,9 +188,7 @@ interface ReinsApi {
   listSurfaces(f?: SurfaceFilter): Promise<SurfacePage>;
   flow(req: FlowRequest): Promise<GraphSlice>;
   diff(req: DiffRequest): Promise<SemanticDiff>;
-  listNotes(f?: NoteFilter): Promise<NoteSummary[]>;
-  getNote(id: string): Promise<KnowledgeNote>;
-  proposeNote(input: NoteProposal): Promise<NoteProposalResult>;
+  proposeNode(input: NodeProposal): Promise<NodeProposalResult>;
   check(req?: CheckRequest): Promise<CheckReport>;
   harnessPack(req: PackRequest): Promise<HarnessPack>;
 }
@@ -207,9 +206,19 @@ Transport mapping:
 | `listSurfaces` | `reins surfaces` | `listSurfaces` | `reins_surfaces` |
 | `flow` | `reins flow <target>` | `flow` | `reins_flow` |
 | `diff` | `reins diff <range>` | `diff` | `reins_diff` |
-| `listNotes` | `reins notes` | `listNotes` | `reins_knowledge_search` |
-| `getNote` | `reins note <id>` | `getNote` | `reins_knowledge_get` |
-| `proposeNote` | `reins note propose` | not exposed | `reins_knowledge_propose` |
+| `proposeNode` | `reins propose <title>` | not exposed | `reins_knowledge_propose` |
+| `knowledgeTree` | `reins knowledge tree` (via get) | `knowledgeTree` | not exposed |
+| `knowledgeNode` | `reins knowledge get <address>` | `knowledgeNode` | `reins_knowledge_get` |
+| `saveKnowledgeNode` | `reins knowledge new` | `saveKnowledgeNode` | not exposed |
+| `acceptKnowledgeNode` | `reins knowledge accept` | `acceptKnowledgeNode` | not exposed |
+| `searchKnowledge` | `reins ask`, `reins knowledge search` | `searchKnowledge` | `reins_knowledge_search` |
+| `knowledgeContext` | `reins knowledge context <path>` | `knowledgeContext` | `reins_knowledge_context` |
+| `knowledgeCoverage` | `reins knowledge coverage` | `knowledgeCoverage` | `reins_knowledge_coverage` |
+| `bootstrapKnowledge` | `reinss knowledge init --from-code` | `bootstrapKnowledge` | not exposed |
+| `aiKnowledgeInit` | `reinss knowledge init --from-code --ai` | `aiKnowledgeInit` | not exposed |
+| `migrateKnowledge` | `reins knowledge migrate` | `migrateKnowledge` | not exposed |
+| `knowledgeComments` | `reins knowledge comment` | `knowledgeComments` | not exposed |
+| `addKnowledgeComment` | `reins knowledge comment --body` | `addKnowledgeComment` | not exposed |
 | `check` | `reins check` | `check` | `reins_check` |
 | `harnessPack` | `reins pack` | not exposed | `reins_harness_pack` |
 
@@ -227,12 +236,16 @@ Adding a method means adding it to core, then all three transports, then one con
 └── .reins/                        Committed unless marked cache.
     ├── config.json                Repository config and detector options.
     ├── knowledge/
-    │   ├── specs/
+    │   ├── template.md            Layers, required fields, naming, rules.
+    │   ├── _rules.md              Tree-wide guidance, never a node.
+    │   ├── _aliases.yaml          Query aliases.
+    │   ├── components/            One directory per code component and its nodes.
+    │   ├── specs/                 Legacy type folders, migrate with `knowledge migrate`.
     │   ├── decisions/
     │   ├── constraints/
     │   ├── howto/
     │   ├── questions/
-    │   └── inbox/                 Proposed notes awaiting human review.
+    │   └── inbox/                 Proposed nodes awaiting human review.
     ├── .cache/                    Gitignored, derived, deletable.
     │   ├── surfaces.json
     │   ├── knowledge-index.json
@@ -249,7 +262,7 @@ Rules:
 - No second graph store. Reins never copies `graft/` into SQLite, JSON, or memory-mapped files of its own. Graph slices are computed per request and cached only in memory for the process lifetime.
 - A deleted `.cache` must produce a correct app with a slower first query. This is tested.
 - Config is JSON. Knowledge frontmatter is YAML. Do not add a second YAML config surface.
-- Knowledge folders are organizational. The note's `type` field is authoritative, and `reins check` reports a folder and type mismatch as a warning.
+- Knowledge folders are components. Node identity is the address, the directory is the component, and `type` lives in frontmatter.
 
 ## 7. Caching and invalidation
 
@@ -334,7 +347,7 @@ load knowledge folder
   -> build in-memory note graph and symbol/surface edges
   -> check: broken links, duplicate IDs, unknown types, folder mismatch
   -> check with --code: verify symbol IDs through trail skeleton per file (cached)
-  -> report items with severity, note id, path, and fix hint
+  -> report items with severity, node address, path, and fix hint
 ```
 
 `check --code` batches verification by file. It does not call Trail once per symbol. Files not present in the graph are reported as `unknown-file`, not as a crash.
@@ -429,7 +442,7 @@ Four extension points exist in v1. Nothing else is pluggable.
 | Point | Interface | Registration | Test requirement |
 | --- | --- | --- | --- |
 | Surface detector | `SurfaceDetector` | Explicit array in `core/src/surfaces/registry.ts` | Fixture repository and golden surfaces |
-| Knowledge type | `NoteTypeSpec` | Explicit record in `core/src/knowledge/types.ts` | Schema fixture and one valid and invalid note |
+| Knowledge type | `NodeTypeSpec` | Explicit record in `core/src/knowledge/types.ts` | Schema fixture and one valid and invalid note |
 | Constraint rule | `ConstraintEvaluator` | Explicit record, three rules maximum in Phase 4 | Unit test per rule plus a diff fixture |
 | Parser | `ParserPort` provider | Injected at session creation | Parse smoke test per language |
 

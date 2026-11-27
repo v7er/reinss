@@ -2,16 +2,15 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
   type CheckItem,
-  folderForType,
-  type KnowledgeNote,
+  knowledgeAddress,
   linkTarget,
-  type NoteLink,
-  type NoteProposal,
-  type NoteProposalResult,
-  type NoteSummary,
-  type NoteType,
-  noteFrontmatterSchema,
-  noteIdFromTitle,
+  type NodeLink,
+  type NodeProposal,
+  type NodeProposalResult,
+  type NodeStatus,
+  type NodeType,
+  nodeFrontmatterSchema,
+  nodeSlugFromTitle,
   ReinsError,
 } from "@reinss/core";
 import { createTwoFilesPatch } from "diff";
@@ -19,9 +18,35 @@ import fg from "fast-glob";
 import matter from "gray-matter";
 import { resolveWithinRoot, writeAtomic } from "./paths.js";
 
-export interface LoadedKnowledge {
-  notes: KnowledgeNote[];
-  byId: Map<string, KnowledgeNote>;
+export interface ParsedNode {
+  address: string;
+  id: string;
+  title: string;
+  type: NodeType;
+  status: NodeStatus;
+  tags: string[];
+  updated: string;
+  path: string;
+  component: string;
+  layer: string | null;
+  boundary: boolean;
+  code: string | null;
+  source: "reins" | "openspec";
+  linkCount: number;
+  backlinkCount: number;
+  body: string;
+  links: NodeLink[];
+  commits: string[];
+  mentions: string[];
+  frontmatter: Record<string, unknown>;
+}
+
+export interface LoadedNodes {
+  nodes: ParsedNode[];
+  byId: Map<string, ParsedNode>;
+  byAddress: Map<string, ParsedNode>;
+  guidance: string[];
+  template: string | null;
   backlinks: Map<string, string[]>;
   errors: CheckItem[];
   hash: string;
@@ -44,41 +69,42 @@ function extractMentions(body: string): string[] {
   return [...mentions];
 }
 
-function normalizeLinks(value: unknown): NoteLink[] {
+function normalizeLinks(value: unknown): NodeLink[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((link): link is NoteLink => {
+  return value.filter((link): link is NodeLink => {
     if (!link || typeof link !== "object") return false;
     const record = link as Record<string, unknown>;
     return typeof record.rel === "string";
   });
 }
 
-function parseNote(input: {
+function parseNode(input: {
   id: string;
+  address: string;
   file: string;
   text: string;
   source: "reins" | "openspec";
-}): { note: KnowledgeNote | null; error: CheckItem | null } {
+}): { node: ParsedNode | null; error: CheckItem | null } {
   let parsed: matter.GrayMatterFile<string>;
   try {
     parsed = matter(input.text);
   } catch (err) {
     return {
-      note: null,
+      node: null,
       error: {
-        code: "NOTE_INVALID",
+        code: "NODE_INVALID",
         severity: "error",
         message: `Could not parse frontmatter: ${err instanceof Error ? err.message : String(err)}`,
         path: input.file,
       },
     };
   }
-  const result = noteFrontmatterSchema.safeParse(parsed.data);
+  const result = nodeFrontmatterSchema.safeParse(parsed.data);
   if (!result.success) {
     return {
-      note: null,
+      node: null,
       error: {
-        code: "NOTE_INVALID",
+        code: "NODE_INVALID",
         severity: "error",
         message: result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
         path: input.file,
@@ -87,24 +113,34 @@ function parseNote(input: {
   }
   const data = result.data;
   const links = normalizeLinks(data.links);
-  const note: KnowledgeNote = {
-    id: input.id,
-    title: data.title,
-    type: data.type,
-    status: data.status,
-    tags: data.tags,
-    updated: data.updated,
-    path: input.file,
-    linkCount: links.length,
-    backlinkCount: 0,
-    source: input.source,
-    body: parsed.content.trim(),
-    links,
-    commits: data.commits,
-    mentions: extractMentions(parsed.content),
-    frontmatter: parsed.data as Record<string, unknown>,
+  const folder = input.address.includes("/")
+    ? input.address.slice(0, input.address.lastIndexOf("/"))
+    : "";
+  return {
+    node: {
+      address: input.address,
+      id: input.id,
+      title: data.title,
+      type: data.type,
+      status: data.status,
+      tags: data.tags,
+      updated: data.updated,
+      path: input.file,
+      component: data.component ?? folder,
+      layer: data.layer ?? null,
+      boundary: data.boundary ?? false,
+      code: data.code ?? null,
+      source: input.source,
+      linkCount: links.length,
+      backlinkCount: 0,
+      body: parsed.content.trim(),
+      links,
+      commits: data.commits,
+      mentions: extractMentions(parsed.content),
+      frontmatter: parsed.data as Record<string, unknown>,
+    },
+    error: null,
   };
-  return { note, error: null };
 }
 
 const openspecPatterns = [
@@ -127,7 +163,7 @@ export async function listOpenSpecFiles(root: string): Promise<string[]> {
   return openspecFiles(root);
 }
 
-function openspecKind(file: string): { kind: string; type: NoteType } {
+function openspecKind(file: string): { kind: string; type: NodeType } {
   if (file === "openspec/config.yaml") return { kind: "config", type: "constraint" };
   if (file === "openspec/project.md") return { kind: "project", type: "spec" };
   if (file.endsWith("/proposal.md")) return { kind: "proposal", type: "spec" };
@@ -168,16 +204,16 @@ function titleFromText(text: string, fallback: string): string {
   return (match?.[1]?.trim() ?? fallback).slice(0, 120);
 }
 
-async function openspecNotes(
+async function openspecNodes(
   root: string,
 ): Promise<
-  Array<{ id: string; file: string; text: string; type: NoteType; updated: string; kind: string }>
+  Array<{ id: string; file: string; text: string; type: NodeType; updated: string; kind: string }>
 > {
   const results: Array<{
     id: string;
     file: string;
     text: string;
-    type: NoteType;
+    type: NodeType;
     updated: string;
     kind: string;
   }> = [];
@@ -197,16 +233,17 @@ async function openspecNotes(
   return results;
 }
 
-function openspecToNote(input: {
+function openspecToNode(input: {
   id: string;
   file: string;
   text: string;
-  type: NoteType;
+  type: NodeType;
   updated: string;
   kind: string;
-}): KnowledgeNote {
+}): ParsedNode {
   const fallback = input.kind === "config" ? "OpenSpec project config" : input.id;
   return {
+    address: input.file.replace(/\.md$/, ""),
     id: input.id,
     title: titleFromText(input.text, fallback),
     type: input.type,
@@ -214,9 +251,13 @@ function openspecToNote(input: {
     tags: ["openspec", input.kind],
     updated: input.updated,
     path: input.file,
+    component: input.file.split("/").slice(0, -1).join("/"),
+    layer: null,
+    boundary: false,
+    code: null,
+    source: "openspec",
     linkCount: 0,
     backlinkCount: 0,
-    source: "openspec",
     body: input.text.trim(),
     links: [],
     commits: [],
@@ -225,10 +266,13 @@ function openspecToNote(input: {
   };
 }
 
-export async function loadKnowledge(root: string, knowledgeDir: string): Promise<LoadedKnowledge> {
-  const notes: KnowledgeNote[] = [];
+export async function loadKnowledgeNodes(root: string, knowledgeDir: string): Promise<LoadedNodes> {
+  const nodes: ParsedNode[] = [];
   const errors: CheckItem[] = [];
-  const byId = new Map<string, KnowledgeNote>();
+  const byId = new Map<string, ParsedNode>();
+  const byAddress = new Map<string, ParsedNode>();
+  const guidance: string[] = [];
+  let template: string | null = null;
   const files = await fg([`${knowledgeDir}/**/*.md`], {
     cwd: root,
     onlyFiles: true,
@@ -237,85 +281,98 @@ export async function loadKnowledge(root: string, knowledgeDir: string): Promise
   });
 
   for (const file of files) {
+    const base = path.basename(file);
     const text = await fs.readFile(resolveWithinRoot(root, file), "utf8");
+    if (base === "template.md") {
+      template = text;
+      continue;
+    }
+    if (base.startsWith("_")) {
+      guidance.push(file);
+      continue;
+    }
+    if (base.startsWith("index.")) continue;
     const id = path.basename(file, ".md");
-    const parsed = parseNote({ id, file, text, source: "reins" });
+    const address = knowledgeAddress(file, knowledgeDir);
+    const parsed = parseNode({ id, address, file, text, source: "reins" });
     if (parsed.error) {
       errors.push(parsed.error);
       continue;
     }
-    if (!parsed.note) continue;
-    if (byId.has(id)) {
+    if (!parsed.node) continue;
+    if (byAddress.has(address)) {
       errors.push({
-        code: "NOTE_DUPLICATE_ID",
+        code: "NOTE_ADDRESS_DUPLICATE",
         severity: "error",
-        message: `Duplicate note id "${id}".`,
-        noteId: id,
+        message: `Duplicate node address "${address}".`,
+        nodeId: id,
         path: file,
       });
       continue;
     }
-    byId.set(id, parsed.note);
-    notes.push(parsed.note);
+    byAddress.set(address, parsed.node);
+    if (byId.has(id)) {
+      errors.push({
+        code: "NODE_DUPLICATE_ID",
+        severity: "error",
+        message: `Duplicate node id "${id}".`,
+        nodeId: id,
+        path: file,
+      });
+      continue;
+    }
+    byId.set(id, parsed.node);
+    nodes.push(parsed.node);
   }
 
-  for (const openspecNote of await openspecNotes(root)) {
-    if (byId.has(openspecNote.id)) continue;
-    const note = openspecToNote(openspecNote);
-    byId.set(note.id, note);
-    notes.push(note);
+  for (const openspecNode of await openspecNodes(root)) {
+    if (byId.has(openspecNode.id)) continue;
+    const node = openspecToNode(openspecNode);
+    byId.set(node.id, node);
+    byAddress.set(node.address, node);
+    nodes.push(node);
   }
 
   const backlinks = new Map<string, string[]>();
-  for (const note of notes) {
-    for (const link of note.links) {
+  for (const node of nodes) {
+    for (const link of node.links) {
       const target = linkTarget(link);
-      if (target.kind === "note") {
-        const list = backlinks.get(target.value) ?? [];
-        list.push(note.id);
-        backlinks.set(target.value, list);
+      if (target.kind === "node") {
+        const resolved = byId.get(target.value) ?? byAddress.get(target.value);
+        const key = resolved?.id ?? target.value;
+        const list = backlinks.get(key) ?? [];
+        list.push(node.id);
+        backlinks.set(key, list);
       }
     }
-    for (const mention of note.mentions) {
+    for (const mention of node.mentions) {
       const list = backlinks.get(mention) ?? [];
-      list.push(note.id);
+      list.push(node.id);
       backlinks.set(mention, list);
     }
   }
-  for (const note of notes) {
-    note.backlinkCount = backlinks.get(note.id)?.length ?? 0;
+  for (const node of nodes) {
+    node.backlinkCount = backlinks.get(node.id)?.length ?? 0;
   }
 
-  const hash = hashText(notes.map((note) => `${note.id}:${note.updated}:${note.body}`).join("\n"));
-  return { notes, byId, backlinks, errors, hash };
+  const hash = hashText(nodes.map((node) => `${node.id}:${node.updated}:${node.body}`).join("\n"));
+  return { nodes, byId, byAddress, guidance, template, backlinks, errors, hash };
 }
 
-export function noteSummary(note: KnowledgeNote): NoteSummary {
-  const {
-    body: _body,
-    links: _links,
-    commits: _commits,
-    mentions: _mentions,
-    frontmatter: _fm,
-    ...summary
-  } = note;
-  return summary;
-}
-
-export async function proposeNote(
+export async function proposeNode(
   root: string,
   knowledgeDir: string,
-  input: NoteProposal,
-  existing: LoadedKnowledge,
-): Promise<NoteProposalResult> {
-  const baseId = noteIdFromTitle(input.title);
-  let id = baseId;
+  input: NodeProposal,
+  existing: LoadedNodes,
+): Promise<NodeProposalResult> {
+  const baseSlug = nodeSlugFromTitle(input.title);
+  let slug = baseSlug;
   let suffix = 2;
-  while (existing.byId.has(id)) {
-    id = `${baseId}-${suffix}`;
+  while (existing.byAddress.has(`inbox/${slug}`)) {
+    slug = `${baseSlug}-${suffix}`;
     suffix += 1;
   }
-  const file = `${knowledgeDir}/inbox/${id}.md`;
+  const file = `${knowledgeDir}/inbox/${slug}.md`;
   const today = new Date().toISOString().slice(0, 10);
   const frontmatter = {
     title: input.title,
@@ -326,30 +383,26 @@ export async function proposeNote(
     tags: input.tags ?? [],
     links: input.links ?? [],
     commits: [],
+    component: "inbox",
+    layer: "inbox",
     provenance: input.source ?? { kind: "manual" },
   };
-  const text = matter.stringify(`${input.body.trim()}\n`, frontmatter);
+  const text = matter.stringify(`\n${input.body.trim()}\n`, frontmatter);
   const target = resolveWithinRoot(root, file);
   try {
     await fs.access(target);
-    throw new ReinsError("NOTE_EXISTS", `Note already exists: ${file}`);
-  } catch {
-    // expected: file does not exist
+    throw new ReinsError("NODE_EXISTS", `Node already exists: ${file}`);
+  } catch (err) {
+    if (err instanceof ReinsError) throw err;
   }
   await writeAtomic(root, file, text);
-  const diff = createTwoFilesPatch(`a/${file}`, `b/${file}`, "", text, "new note", "proposed");
+  const diff = createTwoFilesPatch(`a/${file}`, `b/${file}`, "", text, "new node", "proposed");
   const warnings: string[] = [];
   for (const link of input.links ?? []) {
     const targetValue = linkTarget(link);
-    if (targetValue.kind === "note" && !existing.byId.has(targetValue.value)) {
-      warnings.push(`Unknown note link: ${targetValue.value}`);
+    if (targetValue.kind === "node" && !existing.byAddress.has(targetValue.value)) {
+      warnings.push(`Unknown node link: ${targetValue.value}`);
     }
   }
-  return { id, path: file, status: "proposed", diff, warnings };
-}
-
-export function folderMismatch(note: KnowledgeNote, knowledgeDir: string): boolean {
-  if (note.source === "openspec") return false;
-  const expected = `${knowledgeDir}/${folderForType(note.type)}/`;
-  return !note.path.startsWith(expected) && !note.path.startsWith(`${knowledgeDir}/inbox/`);
+  return { address: `inbox/${slug}`, path: file, status: "proposed", diff, warnings };
 }

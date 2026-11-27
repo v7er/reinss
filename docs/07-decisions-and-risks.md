@@ -47,12 +47,12 @@ Accepted decisions are binding until a new decision record supersedes them. Reje
 
 **Context.** A local graph store is tempting for search, joins, and large traversals. The reference implementation used a compiled SQLite graph, and that design works when the indexer is yours. Here the indexer is Trail.
 
-**Decision.** No copy of the graph. Reins computes slices from Trail JSON and caches only derived, disposable artifacts in JSON. No SQLite in Phase 1 through Phase 5.
+**Decision.** No copy of the graph. Reins computes slices from Trail JSON and caches only derived, disposable artifacts in JSON. No SQLite in Phase 1 through Phase 5. A knowledge index over markdown is allowed: it holds node text, not code symbols, and deleting it changes latency only.
 
 **Consequences.**
 
 - Node identity never drifts between two stores.
-- Search delegates to Trail. Reins adds scoring only for notes, which are small.
+- Search delegates to Trail. The knowledge index scores markdown only and never stores graph data.
 - A future full-text index over notes can use a small in-memory structure or SQLite, but it must never duplicate the graph.
 - Query performance is bounded by Trail's own query performance.
 
@@ -139,7 +139,7 @@ Accepted decisions are binding until a new decision record supersedes them. Reje
 
 ### ADR-010 Markdown notes with explicit links, no layer system
 
-**Status:** accepted.
+**Status:** superseded by ADR-021.
 
 **Context.** The reference knowledge tool used layers declared in `index.md`, frontmatter, wikilinks, and a waterfall. That model is expressive and adds concepts a new repository must learn before writing one note.
 
@@ -147,7 +147,7 @@ Accepted decisions are binding until a new decision record supersedes them. Reje
 
 **Consequences.** A note is self-describing and a folder is just organization. The board groups by type and tags instead of layers. Migration from a layer-based system is a one-way import helper in Phase 6.
 
-**Rejected.** Making wikilinks the source of truth for typed relations. String parsing cannot reliably distinguish a note, a symbol, and a surface with the same text.
+**Rejected.** Making wikilinks the source of truth for typed relations. String parsing cannot reliably distinguish a node, a symbol, and a surface with the same text.
 
 ### ADR-011 No tldraw dependency in core or UI
 
@@ -163,7 +163,7 @@ Accepted decisions are binding until a new decision record supersedes them. Reje
 
 ### ADR-012 No global state library and no search library
 
-**Status:** accepted.
+**Status:** superseded by ADR-022 for knowledge search. The global state decision stands.
 
 **Context.** The renderer needs a repository session, a selection, and view state. Notes need a ranked search over 1,000 items. Both tempt a dependency.
 
@@ -195,11 +195,11 @@ Accepted decisions are binding until a new decision record supersedes them. Reje
 
 **Status:** accepted.
 
-**Context.** Summaries and drafted notes are useful. They also break the local-only promise if added carelessly.
+**Context.** Summaries and drafted nodes are useful. They also break the local-only promise if added carelessly.
 
-**Decision.** No LLM code path before Phase 6. When added, it is a single module, disabled by default, with a keychain-stored key, a preview of what is sent, and explicit labeling of generated text. No indexing, graph, diff, or check feature depends on it.
+**Decision.** No LLM code path before Phase 6. Phase 7 adds exactly one, `knowledge init --ai`, in `packages/node/src/knowledge-ai.ts`. It is disabled unless `llm.enabled` is true, a model is set, and `REINS_LLM_API_KEY` or `OPENAI_API_KEY` is present. The key lives in the environment, never in config or the repository. Without `--write` it prints the prompt and makes no request. It writes only `status: proposed` nodes and never changes an accepted node, the index, the graph, the diff, or `check`.
 
-**Consequences.** The product works fully offline. The optional layer cannot silently change structural answers. Users who want local models can point the module at a local endpoint.
+**Consequences.** The product works fully offline. The optional layer cannot silently change structural answers. Users who want local models can point `llm.baseUrl` at a local OpenAI-compatible endpoint. A failed request returns `LLM_FAILED` and writes nothing.
 
 ### ADR-016 Code budget and dependency allowlist per phase
 
@@ -217,7 +217,7 @@ Accepted decisions are binding until a new decision record supersedes them. Reje
 
 **Context.** Surfaces and constraint rules need extension. A plugin API would let third parties add frameworks, but it also freezes internal types early.
 
-**Decision.** Four extension points with explicit registries and no runtime loading: surface detector, note type, constraint rule, parser provider. A new extension is a code change with a fixture.
+**Decision.** Four extension points with explicit registries and no runtime loading: surface detector, node type, constraint rule, parser provider. A new extension is a code change with a fixture.
 
 **Consequences.** No versioned plugin contract in v1. Extensible enough for the frameworks on the roadmap, without designing a public API before the second consumer exists.
 
@@ -257,6 +257,40 @@ Accepted decisions are binding until a new decision record supersedes them. Reje
 
 **Rejected.** Using React Flow for the commit graph. It adds DOM nodes per commit and does not give the lane routing or virtual row control the history view needs. Adding a full Git library. It duplicates Git behavior and loses the user's Git configuration.
 
+### ADR-021 Knowledge is a directory tree of nodes
+
+**Status:** accepted. Supersedes ADR-010.
+
+**Context.** Flat type folders lose the shape of the repository. A person asking about a component hunts across five folders, and an agent cannot tell which intent owns a directory. Directories already carry the shape: a component, a boundary, its local rules.
+
+**Decision.** A node is one markdown file with YAML frontmatter under `.reins/knowledge/`. Its address is the path without `.md`. The containing directory is its component or boundary. `template.md` at the knowledge root declares layers by glob, required fields, naming rules, and prose. Files whose stem starts with `_` are guidance for humans and agents, never nodes. `index.yaml` or `index.json` per directory may declare order and groups. Type stays closed (`spec`, `decision`, `constraint`, `howto`, `question`) and lives in frontmatter.
+
+**Consequences.**
+
+- A node is self-describing and read without Reins.
+- `reins check` validates the template, layers, component ownership, and guidance naming.
+- Directory structure is the only hierarchy. No separate layer file.
+- The flat note API (`listNotes`, `getNote`, `proposeNote`) and the notes board are removed. `proposeNode` writes the inbox, and the studio reads nodes. Existing flat notes need an explicit `reinss knowledge migrate`; nothing moves silently.
+
+**Rejected.** A second `.reins/nodes/` store beside notes. Two models to explain and link across.
+
+### ADR-022 A disposable lexical knowledge index
+
+**Status:** accepted. Supersedes ADR-012 for knowledge search.
+
+**Context.** A linear scan over title, body, tags, and symbol names cannot answer "why do refunds write to the ledger first" with a ranked reason at a useful speed, and it ignores committed product vocabulary.
+
+**Decision.** Build a pure TypeScript index over markdown nodes, cached at `.reins/.cache/knowledge-index.json`. BM25 with field boosts, light stemming, aliases from `_aliases.yaml`, and intent routing by query words. No model, no network, no native dependency, no SQLite. The cache is disposable; markdown is the source.
+
+**Consequences.**
+
+- Cold build and warm query stay in milliseconds at the stated scale.
+- Deleting the cache changes latency only.
+- The index stores node text and link labels, never code graph data.
+- Adding an embedding model later needs a new decision record, not a flag.
+
+**Rejected.** SQLite FTS5 (native dependency and second database), embeddings (model dependency, network or bundled runtime).
+
 ## 2. Rejected ideas
 
 | Idea | Why rejected |
@@ -286,7 +320,7 @@ Accepted decisions are binding until a new decision record supersedes them. Reje
 | Q-5 | Does `trail callers` resolve symbols well enough in a monorepo with duplicate package names? | Reins lead | Phase 2 | Run against the monorepo fixture and a real monorepo. If not, add a `--in` path filter to the default flow. |
 | Q-6 | Is a custom element build of the graph view practical, or does React Flow need a React root? | Reins lead | Phase 5 | Spike S4. |
 | Q-7 | Which Tauri and Rust versions are pinned, and what is the upgrade cadence? | Reins lead | Phase 1 start | Pin the current stable, upgrade once per two phases with a smoke run. |
-| Q-8 | How should a note ID be renamed without breaking links? | Reins lead | Phase 4 | Start with a check warning plus a `reins note rename` command that rewrites links atomically. |
+| Q-8 | How should a node address change without breaking links? | Reins lead | Phase 7 | Start with a check warning plus a `reinss knowledge move` command that rewrites links atomically. |
 | Q-9 | What is the fallback when Trail is absent on Windows? | Reins lead | Phase 6 | Document install paths, detect common locations, and keep the typed error. |
 
 ## 4. Assumptions to validate
@@ -335,7 +369,7 @@ Spike rules:
 | R-4 | Tauri or sidecar memory exceeds the budget | Medium | Medium | Lazy chunks, node caps, list view, one sidecar per repo | RSS above 350 MB with one repository open |
 | R-5 | Surface detection creates false links | High | Medium | Fixture golden tests, confidence labels, diagnostics | A fixture route links to an unrelated handler |
 | R-6 | Scope creep into an IDE | Medium | High | Non-goals list, phase gates, ADR-016 budget | A request to add editing, terminals, or LSP features |
-| R-7 | Knowledge tooling becomes a second product | Medium | High | Five note types, two rules, no plugin system | A proposal for custom note schemas or an expression language |
+| R-7 | Knowledge tooling becomes a second product | Medium | High | Five node types, two rules, no plugin system | A proposal for custom node schemas or an expression language |
 | R-8 | Code budget harms readability | Low | Medium | Budget excludes tests, delete features instead of compressing | Reviewers cannot follow a 4,000-line module |
 | R-9 | pnpm or Node toolchain mismatch | Medium | Low | Pinned engines and `packageManager`, CI parity | Install fails on a fresh machine |
 | R-10 | Trail or Git child processes hang | Low | Medium | Timeouts, abort, kill tree, typed errors | A request never settles |

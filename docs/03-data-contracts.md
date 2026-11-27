@@ -18,7 +18,7 @@ Conventions:
 | Core API | `contractVersion` in every response envelope | 1 | New optional fields are allowed in a minor. Removing or renaming a field requires a bump and a transport update in the same change. |
 | Config | `version` | 1 | Older configs migrate in memory. Unknown keys are preserved on write. |
 | Cache | `schemaVersion` | 1 | Mismatch discards the file. No migration. |
-| Knowledge note | frontmatter fields | 1 | New optional fields are allowed. New required fields need a migration command and a docs update. |
+| Knowledge node | frontmatter fields | 1 | New optional fields are allowed. New required fields need a migration command and a docs update. |
 | Trail input | adapter version | 1 | The adapter declares the Trail versions it was tested against. Unknown JSON shape fails with `TRAIL_FORMAT_UNSUPPORTED`. |
 
 The Trail CLI's JSON is an external contract. Reins validates it with zod, keeps recorded fixtures per Trail version under `test/fixtures/trail/<version>/`, and never trusts an unchecked field.
@@ -43,13 +43,13 @@ Path: `<repo>/.reins/config.json`. Created by `reins init`. Missing config means
     "maxNodesPerFile": 20000
   },
   "check": {
-    "verifyCodeLinks": true,
-    "folderMismatch": "warning"
+    "verifyCodeLinks": true
   },
   "llm": {
     "enabled": false,
     "provider": null,
-    "model": null
+    "model": null,
+    "baseUrl": null
   },
   "ui": {
     "theme": "system"
@@ -367,14 +367,6 @@ interface FlowRequest {
   maxNodes?: number;                   // default 500, clamped 1..2000
 }
 
-interface NoteFilter {
-  query?: string;
-  type?: NoteType;
-  status?: NoteStatus;
-  tag?: string;
-  limit?: number;                      // default 20, max 100
-}
-
 interface CheckRequest {
   scope?: 'knowledge' | 'knowledge+code' | 'diff';  // default 'knowledge'
   strict?: boolean;                    // default false
@@ -405,7 +397,7 @@ interface RepoStatus {
     fingerprint: string | null;
     message?: string;
   };
-  knowledge: { notes: number; proposed: number; errors: number };
+  knowledge: { nodes: number; proposed: number; errors: number };
   surfaces: { count: number; stale: boolean };
 }
 
@@ -701,7 +693,7 @@ A component is a level-1 part of the project. The five named kinds are `webapp`,
 
 ### 5.2 IDs
 
-IDs are deterministic and readable. They are stored in knowledge notes, so a change is breaking.
+IDs are deterministic and readable. They are stored in knowledge nodes, so a change is breaking.
 
 | Kind | Format | Example |
 | --- | --- | --- |
@@ -928,28 +920,38 @@ The matcher runs in this order and stops at the first classification that applie
 
 No step may mutate the tree. The matcher is a pure function from two parsed trees to operations.
 
-## 7. Knowledge notes
+## 7. Knowledge nodes
 
-### 7.1 Location and identity
+### 7.1 Location, tree, and identity
 
 ```text
 .reins/knowledge/
-  specs/<id>.md
-  decisions/<id>.md
-  constraints/<id>.md
-  howto/<id>.md
-  questions/<id>.md
-  inbox/<id>.md
+  template.md                 # required once the tree has nodes
+  _rules.md                   # tree-wide guidance, never a node
+  _aliases.yaml               # query aliases
+  index.yaml                  # optional root order
+  components/
+    billing/
+      _rules.md               # component rules, inherited by descendants
+      index.yaml              # optional order and groups
+      billing.md              # boundary node
+      refund-ledger-first.md  # another node in the same component
+  workflows/
+    review.md
 ```
 
-- `id` is the filename stem: lowercase letters, digits, and hyphens, 2 to 64 characters, starting with a letter or digit. It is immutable in practice. Renaming a note requires updating links; `reins check` reports broken ones.
-- `type` is one of `spec`, `decision`, `constraint`, `howto`, `question`.
-- The folder is derived from `type`, except for `inbox/`, which holds proposals of any type. A mismatch is a warning, not an error, because the note is still valid.
-- No `index.md`, no layer configuration, no required ordering. Type plus links do the job.
+- The directory that contains a node is its component or boundary. Directories no longer encode type.
+- `type` is one of `spec`, `decision`, `constraint`, `howto`, `question`, read from frontmatter.
+- A node address is the path below `.reins/knowledge/` without `.md`: `components/billing/refunds`. The address is what links, comments, and coverage use. `id` remains the filename stem for legacy links and is optional in frontmatter.
+- A file whose stem starts with `_` is guidance. It has no address, never appears in a listing or search result, and is inherited by every descendant directory, nearest last.
+- `template.md` declares layers with path globs, required fields, naming rules, and prose guidance. The first matching glob wins. A node whose path matches no layer is a warning; a declared layer that the template does not name is an error.
+- `index.yaml` and `index.json` may declare `order: [address, ...]` and `groups`. This version reads order and ignores the rest.
+- Reserved names: `template.md`, any `_` stem, `index.yaml`, `index.json`.
+- `inbox/` holds proposals of any type. Acceptance moves a node to its component directory.
 
 ```ts
-type NoteType = 'spec' | 'decision' | 'constraint' | 'howto' | 'question';
-type NoteStatus = 'proposed' | 'accepted' | 'superseded' | 'deprecated' | 'rejected';
+type NodeType = 'spec' | 'decision' | 'constraint' | 'howto' | 'question';
+type NodeStatus = 'proposed' | 'accepted' | 'superseded' | 'deprecated' | 'rejected';
 ```
 
 ### 7.2 Frontmatter
@@ -965,7 +967,7 @@ owner: tuevo
 tags: [billing, refunds]
 links:
   - rel: implements
-    note: spec-refunds
+    node: components/billing/refunds
   - rel: constrains
     symbol: src/billing/refund.ts#RefundService.refund
   - rel: exposes
@@ -987,9 +989,13 @@ Fields:
 | `tags` | no | Lowercase strings, max 12, each max 32 characters. |
 | `links` | no | Typed links, see 7.3. |
 | `commits` | no | Full or 7-character SHAs. |
-| `supersedes` | no | Note id. |
-| `supersededBy` | no | Note id. |
+| `supersedes` | no | Node address. |
+| `supersededBy` | no | Node address. |
 | `rule` | constraints only | Machine-checkable rule, see 7.7. |
+| `component` | no | Owning component path. Derived from the location; a mismatch is an error. |
+| `layer` | no | A layer name declared in `template.md`. Derived from the layer glob when absent. |
+| `boundary` | no | Boolean. At most one per component. |
+| `code` | no | Repository-relative code directory this component covers, used by coverage and the context pack. |
 
 Unknown top-level keys are preserved on write and ignored by readers. Unknown `type` or `status` is an error.
 
@@ -998,8 +1004,8 @@ Unknown top-level keys are preserved on write and ignored by readers. Unknown `t
 A link has a `rel` and exactly one target field:
 
 ```ts
-type NoteLink =
-  | { rel: LinkRel; note: string }
+type NodeLink =
+  | { rel: LinkRel; node: string }
   | { rel: LinkRel; symbol: string }
   | { rel: LinkRel; surface: string }
   | { rel: LinkRel; commit: string }
@@ -1023,12 +1029,12 @@ Rules:
 - `surface` must match an existing surface ID.
 - `file` is verified to exist, but not to still contain the relevant code.
 - `commit` is resolved with `git cat-file -e <sha>^{commit}`. An unknown commit is a warning, because history may be shallow.
-- Body `[[note-id]]` mentions are parsed as untyped note mentions. They create backlinks but do not replace typed links. A mention of an unknown note is a warning.
+- Body `[[node-id]]` mentions are parsed as untyped node mentions. They create backlinks but do not replace typed links. A mention of an unknown node is a warning.
 - Duplicate links with the same `rel` and target are an error.
 
 ### 7.4 Body
 
-Free markdown. Recommended sections for decisions: `Decided`, `Context`, `Ruled out`, `Consequences`, `Watch out`. These are guidance, not validation. Constraint notes must include a `Rule` section that restates the rule in prose.
+Free markdown. Recommended sections for decisions: `Decided`, `Context`, `Ruled out`, `Consequences`, `Watch out`. These are guidance, not validation. Constraint nodes must include a `Rule` section that restates the rule in prose.
 
 ### 7.5 Status lifecycle
 
@@ -1038,48 +1044,81 @@ proposed ──accept──> accepted ──supersede──> superseded
     └──reject──> rejected└──deprecate──> deprecated
 ```
 
-- `proposed` notes live in `inbox/`. The only writer is `proposeNote`.
+- `proposed` nodes live in `inbox/`. The only writer is `proposeNode`.
 - Accepting is an explicit action: move the file to its type folder, set `status: accepted`, update `updated`, and leave a Git diff the human reviews. Reins never commits.
-- Accepted notes are the only ones included in harness packs and constraint checks.
-- Deleting an accepted note requires no special handling; links to it become `LINK_BROKEN`.
+- Accepted nodes are the only ones included in harness packs and constraint checks.
+- Deleting an accepted node requires no special handling; links to it become `LINK_BROKEN`.
 
 ### 7.6 Index and search
 
+The knowledge index is a disposable cache at `.reins/.cache/knowledge-index.json`. Deleting it changes latency only. Markdown is the source.
+
 ```ts
-interface NoteSummary {
+interface KnowledgeIndexData {
+  version: 1;
+  builtAt: string;
+  templateHash: string;
+  aliasesHash: string;
+  entries: KnowledgeIndexEntry[];
+}
+
+interface KnowledgeIndexEntry {
+  address: string;
+  title: string;
+  type: NodeType;
+  component: string;
+  updated: string;
+  hash: string;                  // hash of title, tags, headings, body, link labels
+  titleText: string;
+  lengths: { title: number; tags: number; headings: number; body: number; links: number };
+  terms: Record<string, [number, number, number, number, number]>; // term frequency per field
+}
+```
+
+Build rules:
+
+- Read every node, skip guidance, `template.md`, and index files.
+- Reuse an entry when its `hash` is unchanged; reparse only changed nodes.
+- Tokenize with lowercase, Unicode letters and digits, a small stop list, and a light plural and suffix stemmer. No stemming library.
+- Rank with BM25 (`k1 = 1.2`, `b = 0.75`). Field weight multiplies term frequency: title 4, tags 3, headings 2, body 1, link labels 1.
+- Bonuses: exact title 6, title contains the query 3, component name match 1.
+- Alias values from `_aliases.yaml` add weight 0.6. Aliases apply at query time, so editing them does not rebuild the index.
+- Intent routing maps `requirement|spec|shall|must` to `spec`, `why|decision|chose|ruled` to `decision`, `technical|architecture|how|design` to `howto` and `decision`, `rule|never|forbid` to `constraint`, and `question|open|unresolved` to `question`. Matching types gain a rank boost; only a caller-supplied type filters the result.
+- Ties sort by `updated` descending, then address ascending.
+- Result fields: address, title, type, component, score, and a two-line excerpt with a matching span.
+
+```ts
+interface NodeSummary {
   id: string;
   title: string;
-  type: NoteType;
-  status: NoteStatus;
+  type: NodeType;
+  status: NodeStatus;
   tags: string[];
   updated: string;
   path: string;
   linkCount: number;
   backlinkCount: number;
+  address?: string;
+  component?: string;
+  layer?: string | null;
+  boundary?: boolean;
+  code?: string | null;
 }
 
-interface KnowledgeNote extends NoteSummary {
+interface KnowledgeNode extends NodeSummary {
   body: string;
-  links: NoteLink[];
+  links: NodeLink[];
   commits: string[];
   mentions: string[];
   frontmatter: Record<string, unknown>;
 }
 ```
 
-Search ranks in this order, all deterministic:
-
-1. Exact title match.
-2. Title contains the query, case-insensitive.
-3. Tag exact match.
-4. Body contains the query.
-5. Linked symbol name contains the query.
-
-Ties sort by `updated` descending, then `id`. No fuzzy scoring library in v1. Index 1,000 notes with a linear scan.
+Accepted and proposed nodes are searchable. Rejected, superseded, and deprecated nodes are not. Guidance is never a result; it is returned only by the context operation.
 
 ### 7.7 Constraint rules
 
-A constraint note may carry a rule. Phase 4 supports exactly two kinds.
+A constraint node may carry a rule. Phase 4 supports exactly two kinds.
 
 ```yaml
 rule:
@@ -1106,12 +1145,12 @@ Rules:
 ### 7.8 Proposal
 
 ```ts
-interface NoteProposal {
-  type: NoteType;
+interface NodeProposal {
+  type: NodeType;
   title: string;
   body: string;
   tags?: string[];
-  links?: NoteLink[];
+  links?: NodeLink[];
   source?: {
     kind: 'review-comment' | 'agent' | 'manual';
     file?: string;
@@ -1121,8 +1160,8 @@ interface NoteProposal {
   };
 }
 
-interface NoteProposalResult {
-  id: string;
+interface NodeProposalResult {
+  address: string;
   path: string;
   status: 'proposed';
   diff: string;              // unified diff of the new file, for review
@@ -1133,13 +1172,13 @@ interface NoteProposalResult {
 Rules:
 
 - The id is derived from the title: lowercase, ASCII, hyphens, max 64. On collision, append `-2`, `-3`, and so on.
-- The target path is always under `knowledge/inbox/`. Any `..`, absolute path, or existing file produces `PATH_ESCAPE` or `NOTE_EXISTS`.
-- The writer uses a temporary file and rename. A failed write leaves no partial note.
+- The target path is always under `knowledge/inbox/`. Any `..`, absolute path, or existing file produces `PATH_ESCAPE` or `NODE_EXISTS`.
+- The writer uses a temporary file and rename. A failed write leaves no partial node.
 - `source` is provenance metadata and is stored under `provenance` in frontmatter.
 
 ### 7.9 OpenSpec import
 
-Reins reads [OpenSpec](https://github.com/Fission-AI/OpenSpec) files as read-only knowledge notes. OpenSpec is the project knowledge base: brief, requirements, technical decisions, and the task plan for each change.
+Reins reads [OpenSpec](https://github.com/Fission-AI/OpenSpec) files as read-only knowledge nodes. OpenSpec is the project knowledge base: brief, requirements, technical decisions, and the task plan for each change.
 
 | Path | Type | Kind tag |
 | --- | --- | --- |
@@ -1153,14 +1192,73 @@ Reins reads [OpenSpec](https://github.com/Fission-AI/OpenSpec) files as read-onl
 
 Rules:
 
-- Imported notes have `status: accepted`, `source: openspec`, and tags `["openspec", <kind>]`.
+- Imported nodes have `status: accepted`, `source: openspec`, and tags `["openspec", <kind>]`.
 - The `changes/**` patterns include `changes/archive/`, so finished changes stay readable.
 - The id is derived from the path: `openspec-spec-<capability>`, `openspec-change-<change>-<artifact>`, `openspec-change-<change>-spec-<capability>`, `openspec-config`, or `openspec-project`. Ids longer than 64 characters are truncated with a stable hash suffix.
 - The title is the first `# ` heading, or the id when there is no heading. `openspec/config.yaml` uses the fixed title `OpenSpec project config`.
 - `updated` is the file modification date. The body is the file text, unchanged.
-- Imported notes carry no typed links and no commits. They are not proposals and never enter `inbox/`.
-- Reins never writes to `openspec/`. A Reins note with the same id wins; the OpenSpec file is skipped.
-- `reins spec` lists the imported files. `reins notes` includes them, and `reins pack` includes imported constraints and decisions.
+- Imported nodes carry no typed links and no commits. They are not proposals and never enter `inbox/`.
+- Reins never writes to `openspec/`. A Reins node with the same id wins; the OpenSpec file is skipped.
+- `reins spec` lists the imported files. `reins ask` searches them, and `reins pack` includes imported constraints and decisions.
+
+### 7.10 Context pack and comments
+
+`knowledgeContext(codePath)` resolves a repository-relative code path to a component by longest `code` prefix, then by component name. It returns the boundary node (or the first node), the remaining component nodes, up to 8 inherited guidance files, and typed node links. Every item carries a one-line reason. The pack is capped at 20 items and 4,000 estimated tokens and reports `truncated`.
+
+Comments are stored in Git notes under `refs/notes/reins`. One JSON document per commit:
+
+```ts
+interface NotesPayload {
+  version: 1;
+  threads: Array<{
+    node: string;                // node address
+    comments: Array<{ id: string; author: string; at: string; body: string; resolved: boolean }>;
+  }>;
+}
+```
+
+Reads list at most 50 commits touching the node file, then merge threads by address. Writes require an explicit human action; Reins never commits, pushes, or fetches. A missing notes ref yields an empty thread, not an error.
+
+To share threads between team members, each person fetches and pushes the ref explicitly:
+
+```bash
+git fetch origin refs/notes/reins:refs/notes/reins
+git push origin refs/notes/reins
+```
+
+A host that drops the ref loses the threads; the nodes themselves are unaffected.
+
+### 7.11 Knowledge templates and AI drafting
+
+`reinss knowledge init` writes one built-in template. Presets are code constants in `packages/node/src/knowledge-templates.ts`, so adding one is a code change with a test, not a config surface.
+
+| Preset | Layers | Use |
+| --- | --- | --- |
+| `default` | product, component, delivery, inbox | Most repositories. |
+| `minimal` | component, inbox | Small repositories, least ceremony. |
+| `c4` | context, container, component, code, ownership, inbox | Architecture decisions at C4 levels plus code ownership. |
+| `domain` | product, context, component, inbox | Bounded contexts and their language. |
+
+`reinss knowledge init --from-code` builds a deterministic plan from the Trail graph. `--ai` adds one optional model call:
+
+- Disabled unless `llm.enabled` is true, `llm.model` is set, and `REINS_LLM_API_KEY` or `OPENAI_API_KEY` is in the environment.
+- `llm.baseUrl` defaults to `https://api.openai.com/v1`; any OpenAI-compatible chat completions endpoint works.
+- The prompt contains the template, the planned components, and up to 12,000 characters from `openspec/` specs, proposals, designs, and README.
+- Without `--write`, the command prints the prompt and makes no request.
+- With `--write`, drafts are validated against the planned components and template layers. Each accepted draft is written as `status: proposed` with `provenance.kind: agent`; a human accepts it.
+- A failed request returns `LLM_FAILED` and writes nothing. There is no retry loop.
+
+The desktop Settings page discovers local providers by probing these OpenAI-compatible endpoints with a 700 ms timeout:
+
+| Provider | Base URL |
+| --- | --- |
+| Ollama | `http://127.0.0.1:11434/v1` |
+| LM Studio | `http://127.0.0.1:1234/v1` |
+| llama.cpp | `http://127.0.0.1:8080/v1` |
+| vLLM | `http://127.0.0.1:8000/v1` |
+| text-generation-webui | `http://127.0.0.1:5000/v1` |
+
+Discovery and saving are explicit user actions. Saving validates the whole config and preserves every other key. A loopback `baseUrl` needs no API key; any other endpoint requires `REINS_LLM_API_KEY` or `OPENAI_API_KEY`.
 
 ## 8. Check report
 
@@ -1171,7 +1269,7 @@ interface CheckItem {
   code: CheckCode;
   severity: CheckSeverity;
   message: string;
-  noteId?: string;
+  nodeId?: string;
   path?: string;
   line?: number;
   fix?: string;
@@ -1187,10 +1285,9 @@ interface CheckReport {
 }
 
 type CheckCode =
-  | 'NOTE_INVALID'
-  | 'NOTE_DUPLICATE_ID'
-  | 'NOTE_FOLDER_MISMATCH'
-  | 'NOTE_STATUS_INVALID'
+  | 'NODE_INVALID'
+  | 'NODE_DUPLICATE_ID'
+  | 'NODE_STATUS_INVALID'
   | 'LINK_BROKEN'
   | 'LINK_DUPLICATE'
   | 'LINK_TARGET_UNKNOWN'
@@ -1202,7 +1299,7 @@ type CheckCode =
   | 'CONFIG_INVALID';
 ```
 
-- `SYMBOL_MOVED` means the symbol existed but its start line no longer matches the note's recorded link. It is a warning with the current span in `fix`.
+- `SYMBOL_MOVED` means the symbol existed but its start line no longer matches the node's recorded link. It is a warning with the current span in `fix`.
 - `ok` is false only for errors. Warnings are shown but do not fail `reins check` unless `--strict` is passed.
 - Sorting: severity (error, warning, info), then path, then line, then code.
 
@@ -1275,8 +1372,10 @@ interface ReinsError {
 | `DIFF_PARSE_FAILED` | Grammar failed on both sides. | no | Degraded result if one side parsed |
 | `DIFF_WORKER_FAILED` | Utility process died. | yes | CLI exit 4 |
 | `DIFF_TOO_LARGE` | File over the configured cap. | no | Degraded result |
-| `NOTE_INVALID` | Frontmatter or schema error. | no | CLI exit 1 |
-| `NOTE_EXISTS` | Proposal id collision after suffixes. | no | CLI exit 1 |
+| `NODE_INVALID` | Frontmatter or schema error. | no | CLI exit 1 |
+| `NODE_EXISTS` | Proposal address collision after suffixes. | no | CLI exit 1 |
+| `LLM_DISABLED` | AI init requested without `llm.enabled`, a model, or an API key. | no | CLI exit 1 |
+| `LLM_FAILED` | The opted-in model request failed, timed out, or returned unusable JSON. | yes | CLI exit 1 |
 | `KNOWLEDGE_UNAVAILABLE` | Knowledge directory unreadable. | yes | CLI exit 2 |
 | `BUILD_IN_PROGRESS` | A build is already running. | yes | CLI exit 1 |
 | `CANCELLED` | Caller aborted. | yes | CLI exit 1 |
@@ -1305,7 +1404,7 @@ interface CacheFile<T> {
 | File | `data` | Rebuild cost |
 | --- | --- | --- |
 | `surfaces.json` | `{ surfaces: Surface[], diagnostics: ScanDiagnostic[] }` | Full detector scan. Written only when the working tree is clean; a dirty tree rescans so line numbers stay current. |
-| `knowledge-index.json` | `{ notes: NoteSummary[], backlinks: Record<string, string[]> }` | Read and parse every note |
+| `knowledge-index.json` | `KnowledgeIndexData` | Read nodes, reuse unchanged term vectors by hash |
 | `diff/<key>.json` | `SemanticDiff` | Parse and match both sides |
 | `session.json` | `{ recentRepos: string[], lastRepo: string, window?: {...} }` | None, local state |
 
@@ -1377,4 +1476,4 @@ Before changing any shape in this document:
 - [ ] Update the CLI JSON test and the MCP schema snapshot.
 - [ ] Decide whether caches must be discarded. If yes, bump `schemaVersion`.
 - [ ] Update this file, including the example if one exists.
-- [ ] State the user impact: old notes, old caches, old clients, or old Trail versions.
+- [ ] State the user impact: old nodes, old caches, old clients, or old Trail versions.

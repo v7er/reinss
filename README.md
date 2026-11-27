@@ -16,7 +16,7 @@ Reinss is built on [Trail](https://github.com/trailhq) as the code graph. It doe
 | --- | --- |
 | [docs/01-product-spec.md](docs/01-product-spec.md) | What Reinss is, who it serves, and what each release must do. Includes requirement IDs and acceptance criteria. |
 | [docs/02-architecture.md](docs/02-architecture.md) | How the pieces fit: process model, packages, ports, API, storage, caching, security, budgets. |
-| [docs/03-data-contracts.md](docs/03-data-contracts.md) | The JSON and file contracts: config, symbols, surfaces, semantic diff, knowledge notes, errors, cache, versioning. |
+| [docs/03-data-contracts.md](docs/03-data-contracts.md) | The JSON and file contracts: config, symbols, surfaces, semantic diff, knowledge nodes, errors, cache, versioning. |
 | [docs/04-roadmap.md](docs/04-roadmap.md) | Six phases with scope, exit gates, and what each phase refuses to build. |
 | [docs/05-phase-1-foundation.md](docs/05-phase-1-foundation.md) | The detailed build plan for the small-codebase phase: layout, modules, tests, budgets, demo. |
 | [docs/06-ai-harness.md](docs/06-ai-harness.md) | The agent layer: AGENTS.md, project skills, MCP tools, context packs, evaluation, approval gates. |
@@ -31,7 +31,7 @@ Reinss reads [OpenSpec](https://github.com/Fission-AI/OpenSpec) as the project k
 
 Reinss imports these files read-only and marks them `source: openspec`:
 
-| Path | Note type |
+| Path | Node type |
 | --- | --- |
 | `openspec/config.yaml` | `constraint` |
 | `openspec/project.md` | `spec` |
@@ -41,7 +41,7 @@ Reinss imports these files read-only and marks them `source: openspec`:
 | `openspec/changes/**/tasks.md` | `howto` |
 | `openspec/changes/**/specs/**/spec.md` | `spec` |
 
-`reinss spec` lists the files. `reinss notes` includes them, and `reinss pack` includes imported constraints and decisions. Reinss never writes to `openspec/`.
+`reinss spec` lists the files. `reinss ask` searches them, and `reinss pack` includes imported constraints and decisions. Reinss never writes to `openspec/`.
 
 ### Initialize in an existing project
 
@@ -80,7 +80,7 @@ Reinss imports these files read-only and marks them `source: openspec`:
 
    ```bash
    reinss spec
-   reinss notes
+   reinss ask "refunds"
    ```
 
 ### Initialize in a new project
@@ -105,7 +105,8 @@ Then ask the agent to explore the idea and propose the first change. The first c
 | 1 | Strong codebase and one vertical slice | Done: `pnpm check` green; open a repo, search a symbol, see callers. |
 | 2 | Surfaces and graph exploration | Done: Express, Hono, Commander, Next.js, React Router, FastAPI, and OpenAPI JSON detectors; C1 component grouping; Git change overlay; flow view. |
 | 3 | Semantic diff | Done: move, rename, reformat, modify, extract, add, remove; Git ranges. |
-| 4 | Knowledge ledger | Done: notes, typed links, backlinks, OpenSpec import, `reinss check`. |
+| 4 | Knowledge ledger | Done: nodes, typed links, backlinks, OpenSpec import, `reinss check`. |
+| 7 | Knowledge tree and studio | Done: component tree, template layers, lexical index, bootstrap, coverage, Git-notes comments, studio UI. |
 | 5 | Review workspace and embed | Done: diff, graph, knowledge in one view; components mount in a host React app. |
 | 6 | Hardening and full agent layer | Partial: MCP, harness packs, skills, and the file watcher exist; packaging and Windows/Linux remain. |
 
@@ -121,7 +122,7 @@ The implementation follows the same boundaries the spec set: one Trail adapter, 
 
 ![Reinss semantic diff](docs/assets/ui-diff.png)
 
-Mantine theme with a warm paper light mode and the original dark/blue mode. The homepage is recent tools, open git-appraise reviews that need you, and `Cmd+K`. No top bar. `Cmd+K` opens the Spotlight palette. The workspace has three tools: Git (changes, review, history tree, reviews, branches, tags, worktrees), Surfaces (entry points by component, flow, call graph), and Knowledge (notes, check).
+Mantine theme with a warm paper light mode and the original dark/blue mode. The homepage is recent tools, open git-appraise reviews that need you, and `Cmd+K`. No top bar. `Cmd+K` opens the Spotlight palette. The workspace has three tools: Git (changes, review, history tree, reviews, branches, tags, worktrees), Surfaces (entry points by component, flow, call graph), and Knowledge (studio, check).
 
 ## Product principles
 
@@ -166,7 +167,29 @@ pnpm reinss status <repo> --json
 ./bin/reinss status <repo> --json
 ```
 
-The same commands work for `init`, `bootstrap`, `search`, `callers`, `callees`, `graph`, `surfaces`, `flow`, `diff`, `notes`, `note`, `propose`, `check`, `pack`, `spec`, and `mcp`. `bootstrap` is the idempotent one-step setup: config, knowledge folders, graph, and surfaces.
+The same commands work for `init`, `bootstrap`, `search`, `callers`, `callees`, `graph`, `surfaces`, `flow`, `diff`, `propose`, `check`, `pack`, `spec`, `ask`, `knowledge`, `studio`, and `mcp`. `bootstrap` is the idempotent one-step setup: config, knowledge template, folders, graph, and surfaces.
+
+Knowledge commands:
+
+```bash
+reinss knowledge init --list-templates         # default, minimal, c4, domain
+reinss knowledge init --template c4            # write the template and layer directories
+reinss knowledge init --from-code --dry-run    # propose a component tree from the Trail graph
+reinss knowledge init --from-code --ai --write # let the configured model draft nodes from code and specs
+reinss knowledge new --title "Refund policy" --type spec --component components/billing
+reinss knowledge get components/billing/refund-policy
+reinss knowledge context src/billing --json
+reinss ask "why do refunds write to the ledger first"
+reinss knowledge check
+reinss knowledge coverage
+reinss knowledge migrate --map specs=components/product --dry-run
+reinss knowledge comment components/billing/refund-policy --body "Reviewed with finance"
+reinss studio
+```
+
+In the desktop app, the gear button opens Settings. The AI section probes Ollama, LM Studio, llama.cpp, vLLM, and text-generation-webui on loopback, lists their models, and saves the choice to `.reins/config.json`. Knowledge > Studio has an Initialize button that picks a template and can scan code or draft with the configured model.
+
+Nodes are markdown plus YAML frontmatter under `.reins/knowledge/`. The directory is the component. `_` files are guidance. `template.md` declares layers and ships as four built-in presets: `default`, `minimal`, `c4`, `domain`. The index is a disposable cache and never calls a model. AI drafting is the one opt-in network path: `knowledge init --ai` requires `llm.enabled`, `llm.model`, and `REINS_LLM_API_KEY`, previews the prompt, and writes only proposed nodes.
 
 Publish the three public packages (`@reinss/core`, `@reinss/node`, `@reinss/cli`):
 

@@ -14,9 +14,9 @@ This change makes knowledge a tree that mirrors the repository, gives it a templ
 - **Tree grammar.** `.reins/knowledge/template.md` declares layer names, allowed paths, required fields, and naming rules. Files prefixed with `_` are guidance for humans and agents, never nodes and never listed in the UI. `index.yaml` or `index.json` per directory declares ordering and grouping. Both are read in this change; their full semantics land later.
 - **Knowledge studio.** A desktop surface and CLI flow to create, edit, browse, validate, and propose nodes. Save is a file write, never a database write. Agents still write only to `inbox/`.
 - **Fast index.** A pure TypeScript index, cached as disposable JSON under `.reins/.cache/`, rebuilt incrementally from file metadata. BM25-style ranking with field boosts, a committed alias file, and intent routing (`requirement`, `spec`, `technical`, `why`). No model, no network, no native dependency, no second database.
-- **Agent surfaces.** `reins ask`, `reins knowledge get`, and `reins knowledge context <code-path>` for the smallest pack that explains an area. MCP tools with the same contracts, plus the `reins-knowledge` skill.
-- **Bootstrap.** `reins knowledge init --from-code` reads the Trail graph, proposes a component tree, and writes nothing until a person confirms. Every generated node starts as `proposed`.
-- **Sync.** Coverage per component: covered, stale, orphan node, unmapped directory. `reins knowledge check` reports drift instead of letting it accumulate.
+- **Agent surfaces.** `reinss ask`, `reinss knowledge get`, and `reinss knowledge context <code-path>` for the smallest pack that explains an area. MCP tools with the same contracts, plus the `reins-knowledge` skill.
+- **Bootstrap.** `reinss knowledge init --from-code` reads the Trail graph, proposes a component tree, and writes nothing until a person confirms. Every generated node starts as `proposed`.
+- **Sync.** Coverage per component: covered, stale, orphan node, unmapped directory. `reinss knowledge check` reports drift instead of letting it accumulate.
 - **Comments.** A node thread stored in git notes under `refs/notes/reins`, read by the studio, written only by an explicit human action.
 
 ## Capabilities affected
@@ -32,11 +32,12 @@ This change makes knowledge a tree that mirrors the repository, gives it a templ
 
 - `packages/core`: node types, tree grammar, template schema, index query and result types, error codes. Pure, no filesystem.
 - `packages/node`: tree reader, template loader, index builder and query engine, coverage checker, bootstrap planner, git notes reader and writer.
-- `apps/cli`: `reins knowledge <subcommand>`, `reins ask`, `reins studio`, MCP tool registration.
+- `apps/cli`: `reinss knowledge <subcommand>`, `reinss ask`, `reinss studio`, MCP tool registration.
 - `apps/desktop` and `packages/ui`: studio route, tree, editor, validation panel, comment thread.
 - `docs/03-data-contracts.md` section 7: new node and index contracts, frontmatter fields, error codes.
 - `docs/01-product-spec.md` section 5.5, `docs/02-architecture.md`, `docs/06-ai-harness.md` skill catalog and MCP tool list.
 - `docs/07-decisions-and-risks.md`: ADR-010 (no layer system) and ADR-012 (no search library, linear scan) are superseded. ADR-003 needs a clarification that a disposable knowledge index is not a second code graph. New records for the node model and the index.
+- Roadmap: this needs a phase 7 slot. It is not part of the current phase plan, and no phase gate moves until the tasks are done and measured.
 - Existing notes under `.reins/knowledge/` need an explicit migration. No silent move.
 - `RULES.md` needs no new dependency for the index. No native package is added.
 

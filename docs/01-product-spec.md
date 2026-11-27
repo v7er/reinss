@@ -116,19 +116,28 @@ The operation vocabulary and matching order are in [03. Data contracts](03-data-
 
 | ID | Pri | Requirement | Acceptance |
 | --- | --- | --- | --- |
-| KNOW-1 | M | Store knowledge as committed markdown under `.reins/knowledge/`, and read OpenSpec under `openspec/` as read-only knowledge. | A note is readable and editable without Reins; the app never stores knowledge only in a database. OpenSpec files are never written by Reins. |
-| KNOW-2 | M | Support note types: spec, decision, constraint, how-to, question. | Each type validates against a schema; an unknown type is rejected with a path and field. |
-| KNOW-3 | M | Link notes to notes, symbols, surfaces, commits, and files. | Links are stored in frontmatter, validated on load, and resolvable in both directions. |
-| KNOW-4 | M | Show backlinks. | Opening a note lists every note, symbol, and surface that references it. |
-| KNOW-5 | M | Search notes. | Title, body, tags, and linked symbol names; rank is stable. |
-| KNOW-6 | M | Canvas and card view of knowledge. | Notes render as cards with typed edges; positions are stored locally, not in the note. |
-| KNOW-7 | M | Validate the ledger. | `reins check` reports invalid frontmatter, duplicate IDs, broken note links, unknown symbols, unknown surfaces, and stale code links. |
-| KNOW-8 | M | Agent proposals require human review. | A proposed note lands in `knowledge/inbox/` with `status: proposed`; acceptance is an explicit action that moves it and leaves a reviewable Git diff. |
-| KNOW-9 | S | Link a review comment to a knowledge item. | A comment can be promoted to a note draft with the file, line, and diff context prefilled. |
-| KNOW-10 | S | Detect constraint violations in a diff. | For each constraint note with a machine-checkable rule, report pass, fail, or not-applicable against the diff. |
-| KNOW-11 | C | Track note history. | Git history is the history; the app links to the commit that last changed a note. |
+| KNOW-1 | M | Store knowledge as a committed markdown tree under `.reins/knowledge/`: one node per intent, the directory is the component or boundary, `_` files are guidance, `template.md` declares layers. Read OpenSpec under `openspec/` as read-only knowledge. | A node is readable and editable without Reins; the template declares layers and required fields; guidance is never listed as a node; OpenSpec is never written. |
+| KNOW-2 | M | Support node types: spec, decision, constraint, how-to, question. | Each type validates against a schema; an unknown type is rejected with a path and field. |
+| KNOW-3 | M | Link nodes to nodes, symbols, surfaces, commits, and files. | Links are stored in frontmatter, validated on load, and resolvable in both directions. |
+| KNOW-4 | M | Show backlinks. | Opening a node lists every node, symbol, and surface that references it. |
+| KNOW-5 | M | Search nodes by meaning without a model. | BM25 with field boosts, committed aliases, and intent routing; results carry address, score, and excerpt; rank is deterministic. |
+| KNOW-6 | M | Tree and detail view of knowledge. | Nodes render by component with coverage state; position is not stored in the node. |
+| KNOW-7 | M | Validate the ledger. | `reins check` reports invalid frontmatter, duplicate addresses, broken links, unknown symbols and surfaces, stale code links, missing templates, undeclared layers, and component mismatches. |
+| KNOW-8 | M | Agent proposals require human review. | A proposed node lands in `knowledge/inbox/` with `status: proposed`; acceptance is an explicit action that moves it to a component and leaves a reviewable Git diff. |
+| KNOW-9 | S | Link a review comment to a node. | A comment can be promoted to a node draft with the file, line, and diff context prefilled. |
+| KNOW-10 | S | Detect constraint violations in a diff. | For each constraint node with a machine-checkable rule, report pass, fail, or not-applicable against the diff. |
+| KNOW-11 | C | Track node history. | Git history is the history; the app links to the commit that last changed a node. |
+| KNOW-12 | M | Author nodes in a studio. | A tree of components, a node editor driven by `template.md`, validation before save, a diff, and a human acceptance gate. |
+| KNOW-13 | M | Bootstrap a tree from an existing repository. | A preview plan from the Trail graph; writes only `proposed` nodes, the template, and component stubs, and only after an explicit write flag. |
+| KNOW-14 | M | Keep knowledge and code in sync. | Coverage per component: covered, stale, orphan, unmapped, invalid, with a fix suggestion and no auto-edit. |
+| KNOW-15 | S | Discuss a node. | Comments live in Git notes under `refs/notes/reins`; the app reads them, writes only on an explicit human action, and never pushes. |
+| KNOW-16 | M | Expose knowledge to agents. | `reinss ask`, `reinss knowledge context <path>`, and MCP search, get, context, coverage tools with token caps and one write path. |
+| KNOW-17 | S | Offer built-in knowledge templates. | `default`, `minimal`, `c4`, and `domain` presets parse, create their layers, and keep an existing template instead of overwriting it. |
+| KNOW-19 | S | Configure a local model from the desktop. | Settings probes loopback providers, lists models, saves the choice, and shows whether a key is present; saving preserves the rest of the config. |
+| KNOW-20 | S | Initialize knowledge from the desktop. | Studio offers template choice, code scan preview, optional AI drafting, a preview before write, and reloads the tree after writing. |
+| KNOW-18 | S | Draft nodes from code and specs with an opted-in model. | Disabled by default; requires config and an API key; previews the prompt; writes only proposed nodes; a failed request writes nothing. |
 
-The note schema and lifecycle are in [03. Data contracts](03-data-contracts.md#7-knowledge-notes). The OpenSpec import is in [03.9](03-data-contracts.md#79-openspec-import).
+The node schema and lifecycle are in [03. Data contracts](03-data-contracts.md#7-knowledge-nodes). The OpenSpec import is in [03.9](03-data-contracts.md#79-openspec-import).
 
 ### 5.6 Review workspace
 
@@ -198,7 +207,7 @@ type NavigationTarget =
   | { type: 'symbol'; id: string; file?: string; line?: number }
   | { type: 'surface'; id: string }
   | { type: 'diff'; range: DiffRange; symbolId?: string }
-  | { type: 'note'; id: string };
+  | { type: 'node'; id: string };
 ```
 
 Each view accepts the shared context plus view-specific props:
@@ -208,8 +217,7 @@ Each view accepts the shared context plus view-specific props:
 | `GraphView` | `root: { symbolId: string } \| { query: string }` | `direction`, `depth`, `filters`, `onExpand` |
 | `SurfaceExplorer` | none | `filters`, `onSelect`, `groupBy` |
 | `DiffViewer` | `range: DiffRange` | `file`, `layout: 'split' \| 'stacked'`, `onPromote` |
-| `KnowledgeBoard` | none | `filter`, `selectedNoteId`, `onSelect` |
-| `KnowledgeCard` | `noteId` | `compact`, `showBacklinks` |
+| `KnowledgeStudio` | ReinsProvider | `height` |
 | `ReviewWorkspace` | `range: DiffRange` | `initialSelection`, `onNavigate` |
 | `RepoStatus` | none | `compact` |
 
@@ -231,7 +239,7 @@ Rules that apply to all components:
 | Startup | Warm start to usable status in 1.5 s or less on a 100k LOC repository with a built graph. |
 | Graph query | Depth 2 callers under 250 ms p95; depth 5 under 1.2 s p95, on a 200k node graph. |
 | Semantic diff | 1,000-line file under 300 ms p95; 5,000-line file under 1 s p95; files over 1 MB or 20k nodes degrade to line diff with a flag. |
-| Knowledge | 1,000 notes indexed under 300 ms; `check` under 1 s. |
+| Knowledge | 2,000 nodes indexed under 1.5 s cold; query p95 under 50 ms; `check` under 1 s. |
 | Memory | Idle desktop app under 350 MB RSS; main-process heap under 200 MB. |
 | Accessibility | Keyboard reachable, visible focus, AA contrast, no color-only encoding for diff operations. |
 | Portability | macOS first; Windows and Linux build in Phase 6. Repository-relative POSIX paths everywhere. |
@@ -246,7 +254,7 @@ A release is successful when these are true for real repositories, not fixtures 
 1. A developer opens a 100k LOC TypeScript repository, searches a route, and sees the full handler flow in under 10 seconds from launch.
 2. A reviewer sees "moved and renamed, body unchanged" for a real refactor, with no false add/delete pair.
 3. An agent session with Reins tools reads fewer files than the same task without them, measured by tool calls and tokens on the evaluation tasks in `06`.
-4. Every accepted decision note can be reached from at least one symbol or surface.
+4. Every accepted decision node can be reached from at least one symbol or surface.
 5. The same `GraphView` and `DiffViewer` render in the desktop app and in the host example app without code changes.
 6. `pnpm check` is green from a clean clone on macOS and Linux.
 
@@ -270,7 +278,7 @@ A release is successful when these are true for real repositories, not fixtures 
 | Flow | The subgraph reachable from a surface or symbol. |
 | Slice | A bounded graph result with nodes, edges, depth, and a truncation flag. |
 | Semantic operation | One structural change between two revisions: move, rename, extract, inline, reformat, modify, add, remove, reorder. |
-| Knowledge note | A committed markdown file describing intent, a decision, a constraint, a procedure, or a question. |
+| Knowledge node | A committed markdown file under `.reins/knowledge/`, describing intent, a decision, a constraint, a procedure, or a question. Its directory is its component. |
 | Harness pack | A deterministic, token-bounded context bundle for an agent session. |
 | Client | The typed interface every UI component uses to reach the core. |
 | Host | Any application embedding Reins components: desktop shell, tldraw, web app, webview. |
@@ -284,7 +292,7 @@ The MVP is the union of Phase 1 to Phase 5. Each line maps to a requirement ID.
 - [ ] Discover Express and Next.js surfaces, linked to nodes (SURF-1, SURF-2, SURF-3).
 - [ ] Trace from a route (SURF-5).
 - [ ] Structural diff for a file and a commit range, with moves and renames (DIFF-1 to DIFF-9).
-- [ ] Knowledge notes with typed links and backlinks (KNOW-1 to KNOW-5).
+- [ ] Knowledge nodes with typed links and backlinks (KNOW-1 to KNOW-5).
 - [ ] Simple knowledge board (KNOW-6).
 - [ ] Every major view embeddable (EMBED-1 to EMBED-4).
 - [ ] Desktop workspace containing graph, diff, and knowledge (REV-1).

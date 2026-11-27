@@ -12,14 +12,14 @@ The system SHALL create `.reins/` config, the knowledge template, and the knowle
 
 #### Scenario: Initializing a new repository
 
-- **WHEN** the user runs `reins init`
+- **WHEN** the user runs `reinss init`
 - **THEN** `.reins/config.json`, `.reins/knowledge/template.md`, and the knowledge folders exist
 - **AND** an existing config is not overwritten
 - **AND** the output lists every created path
 
 #### Scenario: Initializing an existing repository from code
 
-- **WHEN** the user runs `reins knowledge init --from-code`
+- **WHEN** the user runs `reinss knowledge init --from-code`
 - **THEN** the command prints the component and node plan without writing when `--dry-run` is used or no write flag is given
 - **AND** `--write` creates only `proposed` nodes under `.reins/knowledge/`
 - **AND** no file outside `.reins/knowledge/` changes
@@ -57,17 +57,17 @@ The system SHALL expose graph, surface, knowledge, and diff operations over MCP 
 
 ### Requirement: Query knowledge from the terminal
 
-The system SHALL provide `reins ask`, `reins knowledge search`, `reins knowledge get`, and `reins knowledge context` with human output and `--json` output.
+The system SHALL provide `reinss ask`, `reinss knowledge search`, `reinss knowledge get`, and `reinss knowledge context` with human output and `--json` output.
 
 #### Scenario: Asking a product question
 
-- **WHEN** the user runs `reins ask "why do refunds write to the ledger first"`
+- **WHEN** the user runs `reinss ask "why do refunds write to the ledger first"`
 - **THEN** the command prints ranked nodes with address, title, type, component, and excerpt
 - **AND** `--json` returns the same fields in one envelope
 
 #### Scenario: Reading one node
 
-- **WHEN** the user runs `reins knowledge get components/billing/refunds`
+- **WHEN** the user runs `reinss knowledge get components/billing/refunds`
 - **THEN** the command prints the frontmatter and body
 - **AND** an unknown address exits `1` with `NODE_NOT_FOUND`
 
@@ -79,33 +79,33 @@ The system SHALL provide `reins ask`, `reins knowledge search`, `reins knowledge
 
 ### Requirement: Manage nodes from the terminal
 
-The system SHALL provide `reins knowledge new`, `reins knowledge check`, and `reins knowledge migrate` with an explicit write flag for anything that moves or creates accepted files.
+The system SHALL provide `reinss knowledge new`, `reinss knowledge check`, and `reinss knowledge migrate` with an explicit write flag for anything that moves or creates accepted files.
 
 #### Scenario: Creating a node
 
-- **WHEN** the user runs `reins knowledge new --type spec --component components/billing --title "Refund policy"`
+- **WHEN** the user runs `reinss knowledge new --type spec --component components/billing --title "Refund policy"`
 - **THEN** the command writes a validated node and prints its address
 - **AND** an invalid field exits `1` and writes nothing
 
 #### Scenario: Checking the tree
 
-- **WHEN** the user runs `reins knowledge check`
+- **WHEN** the user runs `reinss knowledge check`
 - **THEN** the command reports template, frontmatter, link, and coverage findings with severity and path
 - **AND** any error exits `1`
 
 #### Scenario: Migrating flat notes
 
-- **WHEN** the user runs `reins knowledge migrate` without `--write`
+- **WHEN** the user runs `reinss knowledge migrate` without `--write`
 - **THEN** the command prints the full old path to new path mapping and writes nothing
 - **AND** with `--write` it moves files with `git mv` and leaves unresolved nodes in `inbox/`
 
 ### Requirement: Open the studio
 
-The system SHALL provide `reins studio` to open the desktop knowledge studio for the current repository.
+The system SHALL provide `reinss studio` to open the desktop knowledge studio for the current repository.
 
 #### Scenario: Opening the studio
 
-- **WHEN** the user runs `reins studio`
+- **WHEN** the user runs `reinss studio`
 - **THEN** the desktop app opens on the knowledge tree for the current repository
 - **AND** a repository without `.reins/knowledge/template.md` shows the initialization step instead of an empty tree
 

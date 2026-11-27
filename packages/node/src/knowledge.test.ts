@@ -3,14 +3,14 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadKnowledge } from "./knowledge.js";
+import { loadKnowledgeNodes } from "./knowledge.js";
 import { createSession } from "./session.js";
 
 async function tempRepo(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "reins-knowledge-"));
 }
 
-describe("loadKnowledge", () => {
+describe("loadKnowledgeNodes", () => {
   it("loads Reins notes and OpenSpec files", async () => {
     const root = await tempRepo();
     await fs.mkdir(path.join(root, ".reins/knowledge/decisions"), { recursive: true });
@@ -37,21 +37,21 @@ describe("loadKnowledge", () => {
       "# Refund design\n\nLedger first.\n",
     );
 
-    const loaded = await loadKnowledge(root, ".reins/knowledge");
-    expect(loaded.notes.map((note) => note.id).sort()).toEqual([
+    const loaded = await loadKnowledgeNodes(root, ".reins/knowledge");
+    expect(loaded.nodes.map((note) => note.id).sort()).toEqual([
       "ledger-first",
       "openspec-change-add-refunds-design",
       "openspec-change-add-refunds-proposal",
       "openspec-config",
       "openspec-spec-refunds",
     ]);
-    expect(loaded.notes.find((note) => note.id === "openspec-config")?.source).toBe("openspec");
-    expect(loaded.notes.find((note) => note.id === "openspec-config")?.type).toBe("constraint");
-    expect(loaded.notes.find((note) => note.id === "openspec-config")?.title).toBe(
+    expect(loaded.nodes.find((note) => note.id === "openspec-config")?.source).toBe("openspec");
+    expect(loaded.nodes.find((note) => note.id === "openspec-config")?.type).toBe("constraint");
+    expect(loaded.nodes.find((note) => note.id === "openspec-config")?.title).toBe(
       "OpenSpec project config",
     );
     expect(
-      loaded.notes.find((note) => note.id === "openspec-change-add-refunds-design")?.type,
+      loaded.nodes.find((note) => note.id === "openspec-change-add-refunds-design")?.type,
     ).toBe("decision");
   });
 
@@ -62,8 +62,8 @@ describe("loadKnowledge", () => {
       path.join(root, ".reins/knowledge/decisions/bad.md"),
       `---\ntitle: Bad\ntype: nope\nstatus: accepted\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n`,
     );
-    const loaded = await loadKnowledge(root, ".reins/knowledge");
-    expect(loaded.errors[0]?.code).toBe("NOTE_INVALID");
+    const loaded = await loadKnowledgeNodes(root, ".reins/knowledge");
+    expect(loaded.errors[0]?.code).toBe("NODE_INVALID");
   });
 });
 
@@ -111,7 +111,7 @@ rule:
     await fs.writeFile(path.join(root, ".reins/config.json"), JSON.stringify({ version: 1 }));
     await fs.writeFile(
       path.join(root, ".reins/knowledge/decisions/ledger-first.md"),
-      `---\ntitle: Ledger first\ntype: decision\nstatus: accepted\ncreated: 2026-01-01\nupdated: 2026-01-01\nlinks:\n  - rel: implements\n    note: missing-note\n---\n`,
+      `---\ntitle: Ledger first\ntype: decision\nstatus: accepted\ncreated: 2026-01-01\nupdated: 2026-01-01\nlinks:\n  - rel: implements\n    node: missing-node\n---\n`,
     );
     const session = await createSession(root);
     const report = await session.check({ scope: "knowledge" });

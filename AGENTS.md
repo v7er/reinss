@@ -45,7 +45,7 @@ These are not preferences. Breaking one is a defect.
 2. **One API.** `ReinsApi` in `@reinss/core` is the only operation surface. CLI, Tauri, and MCP are thin adapters.
 3. **Pure core.** `@reinss/core` imports no `node:*`, Tauri, React, or filesystem module.
 4. **No Node in UI.** `@reinss/ui` never imports `@reinss/node`, Tauri, or `node:*`.
-5. **Markdown is the knowledge source.** Notes live in `.reins/knowledge/` and are committed. OpenSpec under `openspec/` is read-only. Caches are disposable.
+5. **Markdown is the knowledge source.** Nodes live in `.reins/knowledge/` as a directory tree, one markdown file per intent, with guidance in `_` files and a `template.md` at the root. OpenSpec under `openspec/` is read-only. Caches, including the knowledge index, are disposable.
 6. **No silent installs or builds.** Reins detects Trail and asks. It never installs it, never builds a graph in the background.
 7. **No network by default.** Indexing, graph, diff, knowledge, and check work offline. LLM features are opt-in and arrive in Phase 6.
 8. **No repository code execution.** Parse and read only. Trail and Git are the only child processes.
@@ -109,10 +109,11 @@ For a code change:
 
 ## Skills
 
-Project skills live in `.agents/skills/`. Three exist now:
+Project skills live in `.agents/skills/`. Four exist now:
 
 - `reins-context`: query the graph before reading code.
-- `reins-decision`: record a decision or constraint as a proposed note.
+- `reins-decision`: record a decision or constraint as a proposed node.
+- `reins-knowledge`: ask the knowledge tree for product intent and local rules before reading code.
 - `openspec-init`: initialize OpenSpec as the project knowledge base in a new project.
 
 The remaining skills are specified in [06](docs/06-ai-harness.md#31-catalog) and are written at the start of their phase.
