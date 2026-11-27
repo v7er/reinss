@@ -26,7 +26,7 @@ Shipped since the first TODO:
 
 Top gaps, in user-value order:
 
-1. **Git GUI stops at the working tree.** Status, stage, commit, and log work. No branches, stash, merge, conflict resolution, remotes, or PR review.
+1. **Git GUI stops at the working tree.** Status, stage, commit, log, branches, tags, worktrees, and git-appraise review listing work. No stash, merge, conflict resolution, push or pull, or full PR review.
 2. **Detector coverage is narrow.** Seven detectors, all JS/TS plus Python FastAPI and OpenAPI JSON. No Go, Rust, Java, Ruby, PHP, C#, or mobile screens.
 3. **Knowledge is not the first place to look.** No home, no drift detection, no authoring, no agent entry command.
 4. **Review is a viewer, not a workspace.** Selecting a change does not drive the graph or knowledge panes. No comments, no promote.
@@ -36,7 +36,7 @@ Top gaps, in user-value order:
 
 | Tool | Sub-views | State |
 | --- | --- | --- |
-| Git | Changes, Diff, Review, History | Status, stage, unstage, commit, log, and commit diff work. |
+| Git | Changes, Diff, Review, History, Reviews | Status, stage, unstage, commit, log, commit diff, branches, tags, worktrees, and git-appraise review listing work. |
 | Surfaces | Entry points, Flow, Graph | Entry points grouped and filtered by component. Flow and Graph work for code surfaces. |
 | Knowledge | Notes, Check | Read-only board and check report. |
 
@@ -68,7 +68,7 @@ Home stays the launcher. Deep links route into the owning tool and sub-view.
 - **Stash.** Push, pop, list, drop.
 - **Conflicts.** Conflict list, take ours or theirs, resolve.
 - **Remotes.** Fetch, pull, push, remote list. Network stays opt-in.
-- **Pull request review.** PR model, base/head from a PR ref, review comments, approve or request changes, export.
+- **Pull request review.** Full PR model, base/head from a PR ref, review comments, approve or request changes, export. git-appraise review listing exists.
 
 ### Tasks
 
@@ -171,7 +171,7 @@ Home stays the launcher. Deep links route into the owning tool and sub-view.
 ## Order
 
 1. **K1 and K2** next. The knowledge home and drift detection make knowledge the first place to look.
-2. **G3 and G4** next. Branches, stash, remotes, and PR review complete the Git GUI.
+2. **G3 and G4** next. Stash, push and pull, and PR review complete the Git GUI.
 3. **S3 and S4** next. The registry, then Go and Rust, the largest missing language groups.
 4. **G5**, then **K3 to K7**, then **S5 to S10**.
 5. **T1 to T6** alongside the milestone that needs them.

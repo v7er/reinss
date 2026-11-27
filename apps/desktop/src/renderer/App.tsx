@@ -13,6 +13,7 @@ import {
   Paper,
   ScrollArea,
   SegmentedControl,
+  Select,
   Stack,
   Switch,
   Tabs,
@@ -31,8 +32,15 @@ import type {
   CheckReport,
   DiffRange,
   FileDiff,
+  GitBranches,
+  GitCommitRefs,
   GitGraphCommit,
+  GitMergeResult,
+  GitReview,
+  GitReviews,
   GitStatus,
+  GitSync,
+  GitSyncRef,
   GraphNode,
   GraphSlice,
   NavigationTarget,
@@ -64,14 +72,19 @@ import {
   IconCheck,
   IconChevronRight,
   IconCommand,
+  IconCopy,
   IconFolder,
+  IconGitBranch,
   IconGitCompare,
+  IconGitMerge,
+  IconGitPullRequest,
   IconHome,
   IconLayoutDashboard,
   IconPlus,
   IconRefresh,
   IconRoute,
   IconSearch,
+  IconTag,
   IconTrash,
   IconWand,
 } from "@tabler/icons-react";
@@ -88,13 +101,16 @@ import {
 import { tailPath } from "./path.js";
 
 type ToolId = "status" | "git" | "surfaces" | "knowledge" | "review";
-type GitTab = "changes" | "history" | "refs";
+type GitTab = "changes" | "history" | "reviews" | "refs";
 type SurfaceTab = "entry" | "flow" | "graph";
 type KnowledgeTab = "notes" | "check";
 type SyncState = "idle" | "syncing" | "synced" | "error";
 
 const RECENT_KEY = "reins.recentTools";
 const REPOS_KEY = "reins.recentRepos";
+const GIT_FETCH_KEY = "reins.gitAutoFetch";
+const GIT_FETCH_INTERVAL_KEY = "reins.gitFetchInterval";
+const GIT_FETCH_INTERVALS = [30_000, 60_000, 300_000];
 
 function readRecent(key: string): string[] {
   try {
@@ -143,7 +159,7 @@ const TOOLS: Array<{ id: ToolId; label: string; description: string }> = [
   {
     id: "git",
     label: "Git",
-    description: "Changes, history, branches, tags, and worktrees",
+    description: "Changes, history, reviews, and refs",
   },
   { id: "surfaces", label: "Surfaces", description: "Entry points, flow, and call graph" },
   { id: "knowledge", label: "Knowledge", description: "Notes, constraints, and check" },
@@ -849,6 +865,102 @@ function GitHistory({ onOpen }: { onOpen: (hash: string) => void }) {
   );
 }
 
+function reviewRange(review: GitReview): DiffRange | null {
+  return review.base && review.head
+    ? { mode: "range", base: review.base, head: review.head }
+    : null;
+}
+
+function GitReviewList({ onReview }: { onReview: (range: DiffRange) => void }) {
+  const { client } = useReins();
+  const state = useAsync(() => client.call<GitReviews>("gitReviews"), []);
+  const reviews = state.data?.reviews ?? [];
+
+  return (
+    <Stack gap="md">
+      {state.loading ? (
+        <Group gap="sm">
+          <Loader size="sm" />
+          <Text size="sm" c="dimmed">
+            Reading git-appraise reviews…
+          </Text>
+        </Group>
+      ) : null}
+      {state.error ? (
+        <Alert color="red" variant="light">
+          {state.error.message}
+        </Alert>
+      ) : null}
+      {state.data && !state.data.available ? (
+        <Alert color="gray" variant="light">
+          No git-appraise reviews detected. Reviews appear here when the repository has
+          <code> refs/notes/devtools/reviews</code>.
+        </Alert>
+      ) : null}
+      {reviews.map((review) => {
+        const range = reviewRange(review);
+        return (
+          <Paper key={review.revision} withBorder radius="lg" p="md">
+            <Group justify="space-between" align="flex-start" wrap="nowrap">
+              <Stack gap={4} style={{ minWidth: 0 }}>
+                <Group gap="xs">
+                  <Badge
+                    size="xs"
+                    variant="light"
+                    color={review.submitted ? "gray" : review.resolved ? "green" : "orange"}
+                  >
+                    {review.submitted ? "submitted" : review.resolved ? "accepted" : "open"}
+                  </Badge>
+                  {review.needsReview ? (
+                    <Badge size="xs" variant="light" color="orange">
+                      needs review
+                    </Badge>
+                  ) : null}
+                  <Text size="xs" c="dimmed" ff="monospace">
+                    {review.shortRevision}
+                  </Text>
+                </Group>
+                <Text size="sm" fw={600} truncate>
+                  {review.description || "(no description)"}
+                </Text>
+                <Text size="xs" c="dimmed" truncate>
+                  {review.requester || "unknown"} → {review.targetRef ?? "abandoned"}
+                  {review.reviewers.length > 0
+                    ? ` · reviewers: ${review.reviewers.join(", ")}`
+                    : ""}
+                  {review.comments > 0 ? ` · ${review.comments} comments` : ""}
+                </Text>
+              </Stack>
+              <Button size="compact-sm" disabled={!range} onClick={() => range && onReview(range)}>
+                Review diff
+              </Button>
+            </Group>
+          </Paper>
+        );
+      })}
+      {state.data?.available && reviews.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          No reviews yet.
+        </Text>
+      ) : null}
+    </Stack>
+  );
+}
+
+function syncRefLabel(ref: GitSyncRef): string {
+  if (ref.state === "behind") return `behind ${ref.behind}`;
+  if (ref.state === "ahead") return `ahead ${ref.ahead}`;
+  if (ref.state === "diverged") return `diverged ${ref.ahead}/${ref.behind}`;
+  if (ref.state === "new") return `new on ${ref.remote}`;
+  return `updated on ${ref.remote}`;
+}
+
+interface GitConfirm {
+  title: string;
+  message: string;
+  action: () => Promise<unknown>;
+}
+
 function GitTool({
   tab,
   onTab,
@@ -856,45 +968,253 @@ function GitTool({
 }: {
   tab: GitTab;
   onTab: (tab: GitTab) => void;
-  onReview: (hash: string) => void;
+  onReview: (range: DiffRange) => void;
 }) {
   const { client } = useReins();
   const status = useAsync(() => client.call<GitStatus>("gitStatus"), []);
-  const refresh = () => status.reload();
+  const [sync, setSync] = useState<GitSync | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [fetching, setFetching] = useState(false);
+  const [acting, setActing] = useState(false);
+  const [confirm, setConfirm] = useState<GitConfirm | null>(null);
+  const [autoFetch, setAutoFetch] = useState(() => localStorage.getItem(GIT_FETCH_KEY) === "1");
+  const [interval, setIntervalMs] = useState(() => {
+    const stored = Number(localStorage.getItem(GIT_FETCH_INTERVAL_KEY));
+    return GIT_FETCH_INTERVALS.includes(stored) ? stored : 60_000;
+  });
+  const fetchingRef = useRef(false);
+  const reloadStatus = status.reload;
+
+  const runSync = useCallback(
+    async (tags = false) => {
+      if (fetchingRef.current) return;
+      fetchingRef.current = true;
+      setFetching(true);
+      setSyncError(null);
+      try {
+        setSync(await client.call<GitSync>("gitSync", tags ? { tags: true } : undefined));
+        reloadStatus();
+      } catch (err) {
+        setSyncError(err instanceof Error ? err.message : String(err));
+      } finally {
+        fetchingRef.current = false;
+        setFetching(false);
+      }
+    },
+    [client, reloadStatus],
+  );
+
+  useEffect(() => {
+    if (!autoFetch) return;
+    void runSync();
+    const id = window.setInterval(() => void runSync(), interval);
+    return () => window.clearInterval(id);
+  }, [autoFetch, interval, runSync]);
+
+  const toggleAutoFetch = (checked: boolean) => {
+    setAutoFetch(checked);
+    localStorage.setItem(GIT_FETCH_KEY, checked ? "1" : "0");
+  };
+
+  const changeInterval = (value: string | null) => {
+    if (!value) return;
+    const next = Number(value);
+    setIntervalMs(next);
+    localStorage.setItem(GIT_FETCH_INTERVAL_KEY, String(next));
+  };
+
+  const act = async (action: () => Promise<unknown>) => {
+    setActing(true);
+    setSyncError(null);
+    try {
+      await action();
+      await runSync(true);
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const askRebase = (ref: GitSyncRef) =>
+    setConfirm({
+      title: "Rebase branch",
+      message: `Check out and rebase ${ref.name} onto ${ref.upstream ?? "its upstream"}? This rewrites local commits. Conflicts leave the repository mid-rebase.`,
+      action: () =>
+        client.call<GitStatus>("gitRebase", {
+          branch: ref.name,
+          ...(ref.upstream ? { upstream: ref.upstream } : {}),
+        }),
+    });
 
   return (
     <Stack gap="md">
-      <Group justify="flex-end" gap="xs">
-        <Badge variant="light" color="gray" radius="xl">
-          {status.data?.branch ?? "detached"}
-        </Badge>
-        {status.data?.ahead ? (
-          <Badge size="xs" variant="light" color="green">
-            ahead {status.data.ahead}
+      <Group justify="space-between" gap="xs" wrap="wrap">
+        <Group gap="xs">
+          <Switch
+            size="xs"
+            label="Auto fetch"
+            checked={autoFetch}
+            onChange={(event) => toggleAutoFetch(event.currentTarget.checked)}
+          />
+          <Select
+            size="xs"
+            w={80}
+            aria-label="Fetch interval"
+            value={String(interval)}
+            onChange={changeInterval}
+            allowDeselect={false}
+            disabled={!autoFetch}
+            data={[
+              { value: "30000", label: "30s" },
+              { value: "60000", label: "1m" },
+              { value: "300000", label: "5m" },
+            ]}
+          />
+          <Tooltip label="Fetch all remotes now" position="bottom">
+            <ActionIcon
+              variant="subtle"
+              aria-label="Fetch all remotes"
+              loading={fetching}
+              onClick={() => void runSync(true)}
+            >
+              <IconRefresh size={16} />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
+        <Group gap="xs">
+          <Badge variant="light" color="gray" radius="xl">
+            {status.data?.branch ?? "detached"}
           </Badge>
-        ) : null}
-        {status.data?.behind ? (
-          <Badge size="xs" variant="light" color="orange">
-            behind {status.data.behind}
-          </Badge>
-        ) : null}
+          {status.data?.ahead ? (
+            <Badge size="xs" variant="light" color="green">
+              ahead {status.data.ahead}
+            </Badge>
+          ) : null}
+          {status.data?.behind ? (
+            <Badge size="xs" variant="light" color="orange">
+              behind {status.data.behind}
+            </Badge>
+          ) : null}
+        </Group>
       </Group>
+      {syncError ? (
+        <Alert color="red" variant="light" withCloseButton onClose={() => setSyncError(null)}>
+          {syncError}
+        </Alert>
+      ) : null}
+      {sync && sync.refs.length > 0 ? (
+        <Alert
+          color="yellow"
+          variant="outline"
+          title="Refs out of sync"
+          icon={<IconAlertTriangle size={16} />}
+        >
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed">
+              These refs differ from their remote.
+            </Text>
+            {sync.refs.slice(0, 8).map((ref) => (
+              <Group key={`${ref.kind}:${ref.remote}:${ref.name}`} gap="xs" wrap="nowrap">
+                <Badge size="xs" variant="light" color={ref.kind === "branch" ? "blue" : "orange"}>
+                  {ref.kind}
+                </Badge>
+                <Text size="sm" truncate style={{ flex: 1 }}>
+                  {ref.name}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {syncRefLabel(ref)}
+                </Text>
+                {ref.kind === "branch" ? (
+                  ref.state === "ahead" ? (
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      disabled={acting || fetching}
+                      onClick={() =>
+                        void act(() => client.call<GitStatus>("gitPush", { branch: ref.name }))
+                      }
+                    >
+                      Push
+                    </Button>
+                  ) : (
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      color="yellow"
+                      disabled={acting || fetching}
+                      onClick={() => askRebase(ref)}
+                    >
+                      Rebase
+                    </Button>
+                  )
+                ) : (
+                  <Button
+                    size="compact-xs"
+                    variant="light"
+                    disabled={acting || fetching}
+                    onClick={() => void runSync(true)}
+                  >
+                    Fetch
+                  </Button>
+                )}
+              </Group>
+            ))}
+            {sync.refs.length > 8 ? (
+              <Text size="xs" c="dimmed">
+                +{sync.refs.length - 8} more
+              </Text>
+            ) : null}
+          </Stack>
+        </Alert>
+      ) : null}
       <Tabs value={tab} onChange={(value) => value && onTab(value as GitTab)}>
         <Tabs.List>
           <Tabs.Tab value="changes">Changes</Tabs.Tab>
           <Tabs.Tab value="history">History</Tabs.Tab>
-          <Tabs.Tab value="refs">Branches, tags, worktrees</Tabs.Tab>
+          <Tabs.Tab value="reviews">Reviews</Tabs.Tab>
+          <Tabs.Tab value="refs">Refs</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="changes" pt="md">
-          <GitChanges onChanged={refresh} />
+          <GitChanges onChanged={reloadStatus} />
         </Tabs.Panel>
         <Tabs.Panel value="history" pt="md">
-          <GitHistory onOpen={onReview} />
+          <GitHistory onOpen={(hash) => onReview({ mode: "commit", hash })} />
+        </Tabs.Panel>
+        <Tabs.Panel value="reviews" pt="md">
+          <GitReviewList onReview={onReview} />
         </Tabs.Panel>
         <Tabs.Panel value="refs" pt="md">
-          <GitRefs onChanged={refresh} />
+          <GitRefs onChanged={reloadStatus} />
         </Tabs.Panel>
       </Tabs>
+      <Modal
+        opened={confirm !== null}
+        onClose={() => setConfirm(null)}
+        title={confirm?.title}
+        centered
+        radius="lg"
+      >
+        <Stack gap="md">
+          <Text size="sm">{confirm?.message}</Text>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setConfirm(null)}>
+              Cancel
+            </Button>
+            <Button
+              color="yellow"
+              disabled={acting}
+              onClick={() => {
+                const action = confirm?.action;
+                setConfirm(null);
+                if (action) void act(action);
+              }}
+            >
+              Rebase
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Stack>
   );
 }
@@ -914,10 +1234,25 @@ function CommitTimeline({
 }) {
   const layout = layoutGitTree(commits);
   const count = layout.rows.length;
-  const width = count * TIMELINE_COL;
-  const height = Math.max(1, layout.laneCount) * TIMELINE_LANE + 4;
-  const x = (row: number) => (count - 1 - row) * TIMELINE_COL + TIMELINE_DOT;
-  const y = (lane: number) => lane * TIMELINE_LANE + TIMELINE_LANE / 2 + 2;
+  const ref = useRef<HTMLDivElement>(null);
+  const [measured, setMeasured] = useState(0);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const next = entry?.contentRect.width ?? 0;
+      if (next > 0) setMeasured(next);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const width = measured > 0 ? measured : count * TIMELINE_COL;
+  const col = count > 0 ? width / count : TIMELINE_COL;
+  const height = Math.max(1, layout.laneCount) * TIMELINE_LANE + 8;
+  const x = (row: number) => (count - 1 - row) * col + TIMELINE_DOT;
+  const y = (lane: number) => lane * TIMELINE_LANE + TIMELINE_LANE / 2 + 4;
 
   const related = useMemo(() => {
     const set = new Set<number>();
@@ -942,7 +1277,7 @@ function CommitTimeline({
   }, [layout, current]);
 
   return (
-    <div className="reins-timeline" style={{ width }}>
+    <div ref={ref} className="reins-timeline" style={{ width: "100%" }}>
       <svg
         width={width}
         height={height}
@@ -992,12 +1327,12 @@ function CommitTimeline({
             <g key={row.commit.hash} opacity={active || related.has(row.row) ? 1 : 0.35}>
               {active ? (
                 <>
-                  <circle cx={x(row.row)} cy={y(row.lane)} r={9} fill={color} opacity={0.16} />
+                  <circle cx={x(row.row)} cy={y(row.lane)} r={10} fill={color} opacity={0.16} />
                   <circle
                     className="reins-timeline-pulse"
                     cx={x(row.row)}
                     cy={y(row.lane)}
-                    r={4.5}
+                    r={5.5}
                     fill="none"
                     stroke={color}
                     strokeWidth={1.5}
@@ -1006,7 +1341,7 @@ function CommitTimeline({
                     className="reins-timeline-pulse is-delay"
                     cx={x(row.row)}
                     cy={y(row.lane)}
-                    r={4.5}
+                    r={5.5}
                     fill="none"
                     stroke={color}
                     strokeWidth={1.5}
@@ -1027,7 +1362,7 @@ function CommitTimeline({
               <circle
                 cx={x(row.row)}
                 cy={y(row.lane)}
-                r={active ? 4.5 : 4}
+                r={active ? 6 : 4}
                 fill={active ? color : "var(--mantine-color-body)"}
                 stroke={color}
                 strokeWidth={2}
@@ -1041,7 +1376,7 @@ function CommitTimeline({
           <UnstyledButton
             key={row.commit.hash}
             className={`reins-timeline-label ${row.commit.hash === current ? "is-active" : ""}`}
-            style={{ width: TIMELINE_COL }}
+            style={{ width: col }}
             onClick={() => onOpen(row.commit.hash)}
             title={row.commit.subject}
           >
@@ -1066,9 +1401,101 @@ function CommitTimeline({
   );
 }
 
+function RefGroup({ icon, label, items }: { icon: ReactNode; label: string; items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <Group gap={4} wrap="wrap">
+      <Group gap={3} wrap="nowrap">
+        {icon}
+        <Text size="xs" c="dimmed">
+          {label}
+        </Text>
+      </Group>
+      {items.map((item) => (
+        <Badge key={item} size="xs" variant="light" color="gray">
+          {item}
+        </Badge>
+      ))}
+    </Group>
+  );
+}
+
+function MergePreview({
+  source,
+  target,
+  targetHead,
+}: {
+  source: GitGraphCommit;
+  target: string;
+  targetHead: string | null;
+}) {
+  const width = 320;
+  const height = 92;
+  const yTarget = 28;
+  const ySource = 66;
+  const xTarget = 268;
+  const xSource = 96;
+  return (
+    <svg
+      width="100%"
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label={`Merge ${source.shortHash} into ${target}`}
+    >
+      <line
+        x1={16}
+        y1={yTarget}
+        x2={xTarget}
+        y2={yTarget}
+        stroke="var(--mantine-color-gray-5)"
+        strokeWidth={2}
+      />
+      <circle
+        cx={xTarget}
+        cy={yTarget}
+        r={5}
+        fill="var(--mantine-color-body)"
+        stroke="var(--reins-accent)"
+        strokeWidth={2}
+      />
+      <path
+        d={`M${xSource},${ySource} C${xSource + 50},${ySource} ${xTarget - 50},${yTarget} ${xTarget},${yTarget}`}
+        fill="none"
+        stroke="var(--reins-accent)"
+        strokeWidth={2}
+      />
+      <circle cx={xSource} cy={ySource} r={5} fill="var(--reins-accent)" />
+      <text x={16} y={yTarget - 10} fontSize={11} fill="var(--mantine-color-dimmed)">
+        {target}
+      </text>
+      <text
+        x={xTarget - 8}
+        y={yTarget + 4}
+        fontSize={11}
+        textAnchor="end"
+        fill="var(--mantine-color-dimmed)"
+      >
+        {targetHead?.slice(0, 7) ?? ""}
+      </text>
+      <text x={xSource + 10} y={ySource + 4} fontSize={11} fill="var(--mantine-color-text)">
+        {source.shortHash}
+      </text>
+    </svg>
+  );
+}
+
 function CommitDetail({ hash, onOpen }: { hash: string; onOpen: (hash: string) => void }) {
   const { client } = useReins();
   const state = useAsync(() => client.call<GitGraphCommit[]>("gitGraph", { limit: 300 }), []);
+  const refs = useAsync(() => client.call<GitCommitRefs>("gitCommitRefs", { hash }), [hash]);
+  const branches = useAsync(() => client.call<GitBranches>("gitBranches"), []);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [target, setTarget] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
   const commits = state.data ?? [];
   const index = commits.findIndex((commit) => commit.hash === hash);
   const commit = index >= 0 ? commits[index] : null;
@@ -1076,37 +1503,154 @@ function CommitDetail({ hash, onOpen }: { hash: string; onOpen: (hash: string) =
   const start = Math.max(0, Math.min(index - 3, commits.length - 6));
   const around = commits.slice(start, start + 6);
 
+  const localBranches = branches.data?.local ?? [];
+  const mainBranch = refs.data?.defaultBranch ?? branches.data?.current ?? null;
+  const mergedToMain = mainBranch ? (refs.data?.mergedInto.includes(mainBranch) ?? false) : false;
+  const targetName = target ?? mainBranch ?? localBranches[0]?.name ?? null;
+  const targetHead = localBranches.find((branch) => branch.name === targetName)?.head ?? null;
+
+  const openMerge = () => {
+    setTarget(mainBranch ?? localBranches[0]?.name ?? null);
+    setError(null);
+    setNotice(null);
+    setMergeOpen(true);
+  };
+
+  const confirmMerge = async () => {
+    if (!targetName) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await client.call<GitMergeResult>("gitMerge", {
+        source: commit.hash,
+        target: targetName,
+      });
+      setNotice(result.message || `Merged ${commit.shortHash} into ${targetName}.`);
+      refs.reload();
+      state.reload();
+      branches.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <Paper withBorder radius="lg" p="sm">
-      <Stack gap={6}>
-        <Group justify="space-between" gap="xs" wrap="nowrap">
-          <Text size="sm" fw={600} truncate style={{ minWidth: 0 }}>
-            {commit.subject}
-          </Text>
-          <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
-            <Badge size="xs" variant="light" color={index === 0 ? "blue" : "gray"}>
-              {index === 0 ? "head" : "merged"}
-            </Badge>
-            {commit.parents.length > 1 ? (
-              <Badge size="xs" variant="light" color="grape">
-                merge
-              </Badge>
-            ) : null}
-            {commit.refs.slice(0, 3).map((ref) => (
-              <Badge key={ref} size="xs" variant="light" color="gray">
-                {ref}
-              </Badge>
-            ))}
+    <>
+      <Paper withBorder radius="lg" p="sm">
+        <Stack gap={6}>
+          <Group justify="space-between" gap="xs" wrap="nowrap">
+            <Text size="sm" fw={600} truncate style={{ minWidth: 0 }}>
+              {commit.subject}
+            </Text>
+            <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+              {commit.refs.includes("HEAD") ? (
+                <Badge size="xs" variant="light" color="blue">
+                  head
+                </Badge>
+              ) : null}
+              {mergedToMain ? (
+                <Badge size="xs" variant="light" color="green">
+                  merged
+                </Badge>
+              ) : null}
+              {commit.parents.length > 1 ? (
+                <Badge size="xs" variant="light" color="grape">
+                  merge
+                </Badge>
+              ) : null}
+            </Group>
           </Group>
-        </Group>
-        <Text size="xs" c="dimmed">
-          {commit.shortHash} · {commit.author} · {commit.date.slice(0, 16).replace("T", " ")}
-        </Text>
-        <ScrollArea type="auto" scrollbars="x">
-          <CommitTimeline commits={around} current={hash} onOpen={onOpen} />
-        </ScrollArea>
-      </Stack>
-    </Paper>
+          <Text size="xs" c="dimmed">
+            {commit.shortHash} · {commit.author} · {commit.date.slice(0, 16).replace("T", " ")}
+          </Text>
+          <Group gap="md" wrap="wrap">
+            <RefGroup
+              icon={<IconGitBranch size={12} />}
+              label="branches"
+              items={refs.data?.branches ?? []}
+            />
+            <RefGroup icon={<IconTag size={12} />} label="tags" items={refs.data?.tags ?? []} />
+            <RefGroup
+              icon={<IconFolder size={12} />}
+              label="worktrees"
+              items={(refs.data?.worktrees ?? []).map(
+                (worktree) => worktree.branch ?? tailPath(worktree.path),
+              )}
+            />
+          </Group>
+          <ScrollArea type="auto" scrollbars="x">
+            <CommitTimeline commits={around} current={hash} onOpen={onOpen} />
+          </ScrollArea>
+          <Group justify="flex-end" gap="xs">
+            {!mergedToMain ? (
+              <Button
+                size="compact-sm"
+                leftSection={<IconGitMerge size={14} />}
+                onClick={openMerge}
+              >
+                Merge
+              </Button>
+            ) : null}
+            <Button
+              size="compact-sm"
+              variant="default"
+              leftSection={<IconCopy size={14} />}
+              onClick={() => void navigator.clipboard.writeText(commit.hash)}
+            >
+              Copy hash
+            </Button>
+          </Group>
+        </Stack>
+      </Paper>
+      <Modal opened={mergeOpen} onClose={() => setMergeOpen(false)} title="Merge commit" centered>
+        <Stack gap="sm">
+          <Text size="sm">
+            Merge{" "}
+            <Text span size="sm" ff="monospace">
+              {commit.shortHash}
+            </Text>{" "}
+            into
+          </Text>
+          <Select
+            label="Target branch"
+            data={localBranches.map((branch) => branch.name)}
+            value={targetName}
+            onChange={setTarget}
+            searchable
+            allowDeselect={false}
+          />
+          <MergePreview source={commit} target={targetName ?? "?"} targetHead={targetHead} />
+          <Text size="xs" c="dimmed">
+            This checks out {targetName ?? "the target branch"} and creates a merge commit. The
+            working tree must be clean.
+          </Text>
+          {error ? (
+            <Alert color="red" variant="light">
+              {error}
+            </Alert>
+          ) : null}
+          {notice ? (
+            <Alert color="green" variant="light">
+              {notice}
+            </Alert>
+          ) : null}
+          <Group justify="flex-end" gap="xs">
+            <Button variant="default" onClick={() => setMergeOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void confirmMerge()}
+              loading={busy}
+              disabled={!targetName || Boolean(notice)}
+            >
+              Merge
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </>
   );
 }
 
@@ -1205,11 +1749,19 @@ function HomeTool({
   repo,
   recent,
   onSelect,
+  onReview,
+  onOpenReviews,
 }: {
   repo: RepoStatusType["repo"];
   recent: string[];
   onSelect: (tool: ToolId) => void;
+  onReview: (range: DiffRange) => void;
+  onOpenReviews: () => void;
 }) {
+  const { client } = useReins();
+  const reviews = useAsync(() => client.call<GitReviews>("gitReviews"), []);
+  const needsReview = (reviews.data?.reviews ?? []).filter((review) => review.needsReview);
+  const shownReviews = needsReview.slice(0, 5);
   const ordered = [
     ...recent
       .map((id) => TOOLS.find((tool) => tool.id === id))
@@ -1262,6 +1814,57 @@ function HomeTool({
           </UnstyledButton>
         ))}
       </Paper>
+      {needsReview.length > 0 ? (
+        <Stack gap="xs">
+          <Group justify="space-between">
+            <Group gap="xs">
+              <IconGitPullRequest size={14} />
+              <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+                Reviews needing you
+              </Text>
+            </Group>
+            <Badge size="xs" variant="light" color="orange">
+              {needsReview.length}
+            </Badge>
+          </Group>
+          <Paper withBorder radius="lg" p={4}>
+            {shownReviews.map((review) => {
+              const range = reviewRange(review);
+              return (
+                <UnstyledButton
+                  key={review.revision}
+                  className="reins-row"
+                  disabled={!range}
+                  onClick={() => range && onReview(range)}
+                >
+                  <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                    <ThemeIcon variant="light" color="orange" size="md" radius="md">
+                      <IconGitPullRequest size={16} />
+                    </ThemeIcon>
+                    <Stack gap={0} style={{ minWidth: 0 }}>
+                      <span className="reins-row-main">
+                        {review.description || review.shortRevision}
+                      </span>
+                      <Text size="xs" c="dimmed" truncate>
+                        {review.requester || "unknown"} → {review.targetRef ?? "abandoned"}
+                      </Text>
+                    </Stack>
+                  </Group>
+                  <IconChevronRight size={14} />
+                </UnstyledButton>
+              );
+            })}
+            {needsReview.length > shownReviews.length ? (
+              <UnstyledButton className="reins-row" onClick={onOpenReviews}>
+                <Text size="xs" c="dimmed">
+                  {needsReview.length - shownReviews.length} more in Git → Reviews
+                </Text>
+                <IconChevronRight size={14} />
+              </UnstyledButton>
+            ) : null}
+          </Paper>
+        </Stack>
+      ) : null}
       <Group justify="center" gap="xs">
         <Kbd>⌘K</Kbd>
         <Text size="xs" c="dimmed">
@@ -1401,11 +2004,11 @@ function Workspace({
     setKnowledgeTab("notes");
   }, [repo.root]);
 
-  const openSwitcher = () => {
+  const openSwitcher = useCallback(() => {
     setRepos(readRecent(REPOS_KEY));
     setSwitchError(null);
     setSwitcherOpen(true);
-  };
+  }, []);
 
   const removeRepo = async (path: string) => {
     setRepos(forgetRepo(path));
@@ -1517,6 +2120,15 @@ function Workspace({
       ...recentActions,
       ...toolActions,
       {
+        id: "repos",
+        label: "Repositories",
+        description: "List opened and saved repositories",
+        group: "Repository",
+        keywords: ["repos", "repositories", "recent", "saved", "opened", "switch", "list"],
+        leftSection: <IconFolder size={16} />,
+        onClick: openSwitcher,
+      },
+      {
         id: "bootstrap",
         label: "Initialize repository",
         description: "Create .reins config, knowledge folders, graph, and surfaces",
@@ -1561,7 +2173,7 @@ function Workspace({
         },
       },
     ];
-  }, [client, onStatus, recent, select, syncAll]);
+  }, [client, onStatus, openSwitcher, recent, select, syncAll]);
 
   return (
     <ReinsProvider client={client} onNavigate={onNavigate} version={syncVersion}>
@@ -1580,19 +2192,24 @@ function Workspace({
               </Alert>
             ) : null}
             {active === "status" ? (
-              <HomeTool repo={repo} recent={recent} onSelect={select} />
+              <HomeTool
+                repo={repo}
+                recent={recent}
+                onSelect={select}
+                onReview={openReview}
+                onOpenReviews={() => {
+                  setGitTab("reviews");
+                  select("git");
+                }}
+              />
             ) : null}
             {active === "git" ? (
               <ToolPage
                 onBack={goBack}
                 title="Git"
-                description="Changes, history, branches, tags, and worktrees in one place."
+                description="Changes, history, reviews, and refs in one place."
               >
-                <GitTool
-                  tab={gitTab}
-                  onTab={setGitTab}
-                  onReview={(hash) => openReview({ mode: "commit", hash })}
-                />
+                <GitTool key={repo.root} tab={gitTab} onTab={setGitTab} onReview={openReview} />
               </ToolPage>
             ) : null}
             {active === "review" ? (
@@ -1602,7 +2219,9 @@ function Workspace({
                 description={
                   gitRange.mode === "commit"
                     ? `Commit ${gitRange.hash.slice(0, 8)}`
-                    : "Working tree review"
+                    : gitRange.mode === "range"
+                      ? `Review ${gitRange.base.slice(0, 8)}..${gitRange.head.slice(0, 8)}`
+                      : "Working tree review"
                 }
               >
                 <ReviewPage range={gitRange} onRange={setGitRange} />
@@ -1660,24 +2279,9 @@ function Workspace({
           radius="lg"
         >
           <Stack gap="sm">
-            <Group justify="space-between">
-              <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
-                Recent
-              </Text>
-              <Tooltip label="Add repository" position="left">
-                <ActionIcon
-                  variant="light"
-                  radius="xl"
-                  aria-label="Add repository"
-                  onClick={() => void switchRepo()}
-                >
-                  <IconPlus size={16} />
-                </ActionIcon>
-              </Tooltip>
-            </Group>
             {repos.length === 0 ? (
               <Text size="sm" c="dimmed">
-                No repositories yet. Add one with +.
+                No repositories yet.
               </Text>
             ) : null}
             {repos.map((path) => (
@@ -1721,6 +2325,13 @@ function Workspace({
                 {switchError}
               </Alert>
             ) : null}
+            <Button
+              variant="light"
+              leftSection={<IconPlus size={16} />}
+              onClick={() => void switchRepo()}
+            >
+              Open repo
+            </Button>
           </Stack>
         </Modal>
 

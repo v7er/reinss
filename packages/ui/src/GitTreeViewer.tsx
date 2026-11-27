@@ -7,6 +7,7 @@ const ROW_HEIGHT = 34;
 const LANE_WIDTH = 18;
 const GRAPH_LEFT = 16;
 const TEXT_GAP = 14;
+const TOP_PADDING = 8;
 export const LANE_COLORS = [
   "#1f5f8b",
   "#2f9e44",
@@ -98,15 +99,18 @@ function drawTree(
   ctx.translate(0, -scrollTop);
 
   const contentWidth = width;
-  const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 1);
-  const last = Math.min(layout.rows.length, Math.ceil((scrollTop + height) / ROW_HEIGHT) + 1);
+  const first = Math.max(0, Math.floor((scrollTop - TOP_PADDING) / ROW_HEIGHT) - 1);
+  const last = Math.min(
+    layout.rows.length,
+    Math.ceil((scrollTop + height - TOP_PADDING) / ROW_HEIGHT) + 1,
+  );
 
   ctx.lineWidth = 1.5;
   for (const edge of layout.edges) {
     const fromX = laneX(edge.fromLane);
-    const fromY = edge.fromRow * ROW_HEIGHT + ROW_HEIGHT / 2;
+    const fromY = TOP_PADDING + edge.fromRow * ROW_HEIGHT + ROW_HEIGHT / 2;
     const toX = laneX(edge.toLane);
-    const toY = edge.toRow * ROW_HEIGHT + ROW_HEIGHT / 2;
+    const toY = TOP_PADDING + edge.toRow * ROW_HEIGHT + ROW_HEIGHT / 2;
     ctx.strokeStyle = LANE_COLORS[edge.fromLane % LANE_COLORS.length] ?? colors.hairline;
     ctx.beginPath();
     ctx.moveTo(fromX, fromY);
@@ -122,7 +126,7 @@ function drawTree(
   for (let index = first; index < last; index += 1) {
     const row = layout.rows[index];
     if (!row) continue;
-    const y = row.row * ROW_HEIGHT;
+    const y = TOP_PADDING + row.row * ROW_HEIGHT;
     if (row.commit.hash === selected || index === hover) {
       ctx.globalAlpha = row.commit.hash === selected ? 0.55 : 0.3;
       ctx.fillStyle = colors.soft;
@@ -269,7 +273,7 @@ export function GitTreeViewer({
     if (!element) return null;
     const rect = element.getBoundingClientRect();
     const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top + element.scrollTop;
+    const y = event.clientY - rect.top + element.scrollTop - TOP_PADDING;
     if (x < 0 || x > rect.width) return null;
     const row = Math.floor(y / ROW_HEIGHT);
     return row >= 0 && row < layout.rows.length ? row : null;
@@ -287,7 +291,7 @@ export function GitTreeViewer({
     selectRow(next);
     const element = scrollRef.current;
     if (!element) return;
-    const top = next * ROW_HEIGHT;
+    const top = TOP_PADDING + next * ROW_HEIGHT;
     const bottom = top + ROW_HEIGHT;
     if (top < element.scrollTop) element.scrollTo({ top });
     else if (bottom > element.scrollTop + element.clientHeight) {
@@ -349,14 +353,14 @@ export function GitTreeViewer({
           } else if (event.key === "End") {
             event.preventDefault();
             selectRow(layout.rows.length - 1);
-            scrollRef.current?.scrollTo({ top: layout.rows.length * ROW_HEIGHT });
+            scrollRef.current?.scrollTo({ top: TOP_PADDING + layout.rows.length * ROW_HEIGHT });
           } else if (event.key === "Enter" && selected) {
             const commit = layout.rows.find((row) => row.commit.hash === selected)?.commit;
             if (commit) onOpen?.(commit);
           }
         }}
       >
-        <div style={{ height: layout.rows.length * ROW_HEIGHT }} />
+        <div style={{ height: TOP_PADDING + layout.rows.length * ROW_HEIGHT }} />
       </div>
       <canvas ref={canvasRef} className="reins-git-tree-canvas" />
       {drawError ? (

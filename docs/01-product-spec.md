@@ -176,8 +176,10 @@ Tool-by-tool contracts are in [06. AI harness](06-ai-harness.md#4-mcp-tools).
 | GIT-5 | M | Keep destructive operations explicit. | No force push, no silent discard, no network call without a user action. Branch, tag, and worktree deletes require confirmation. |
 | GIT-6 | M | Manage branches. | Local and remote branches list with upstream, ahead, and behind. Checkout, create, and delete are explicit actions. |
 | GIT-7 | M | Manage tags. | Tags list with annotated or lightweight status. Create and delete are explicit actions. |
-| GIT-8 | M | Manage worktrees. | Worktrees list with path, branch, head, and current state. Add and remove are explicit actions; the current worktree cannot be removed. |
+| GIT-8 | M | Manage worktrees. | Worktrees list with path, branch, head, current state, and whether the branch is merged into main. Every row carries a worktree badge; a branch with no same-name remote is marked no remote. Add and remove are explicit actions; the current worktree cannot be removed. |
 | GIT-9 | M | Review in one tab. | Diff and review share one range and one tab. The diff shows what changed; the review side shows graph context and knowledge. |
+| GIT-10 | S | Show git-appraise reviews. | When the repository has git-appraise notes, the Git tool lists reviews and the homepage lists open reviews that need the current user. Opening a review uses its merge base and head as the diff range. No git-appraise binary is required. |
+| GIT-11 | S | Warn when refs drift from remotes. | A yellow alert lists local branches ahead, behind, or diverged from the remote branch of the same name, and remote tags that are new or moved. Each row offers the matching action: rebase a behind or diverged branch, push an ahead branch, or fetch tags. Auto fetch runs `git fetch --all` on a chosen interval and is off until the user turns it on. |
 
 ## 6. Component contract
 

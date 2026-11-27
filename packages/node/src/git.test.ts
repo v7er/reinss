@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -83,6 +83,76 @@ describe("GitAdapter status and history", () => {
   });
 });
 
+describe("GitAdapter reviews", () => {
+  it("detects git-appraise notes and flags reviews that need review", async () => {
+    const dir = makeRepo();
+    const git = new GitAdapter(dir);
+    expect((await git.reviews()).available).toBe(false);
+
+    const base = execSync("git branch --show-current", { cwd: dir }).toString().trim();
+    execSync("git checkout -qb feature", { cwd: dir, stdio: "ignore" });
+    writeFileSync(path.join(dir, "a.ts"), "export const a = 2;\n");
+    execSync("git commit -qam feature", { cwd: dir, stdio: "ignore" });
+    const head = execSync("git rev-parse HEAD", { cwd: dir }).toString().trim();
+    const request = {
+      timestamp: "100",
+      reviewRef: "refs/heads/feature",
+      targetRef: `refs/heads/${base}`,
+      requester: "other@example.com",
+      reviewers: ["test@example.com"],
+      description: "Review me",
+    };
+    execFileSync(
+      "git",
+      [
+        "notes",
+        "--ref",
+        "refs/notes/devtools/reviews",
+        "append",
+        "-m",
+        JSON.stringify(request),
+        head,
+      ],
+      { cwd: dir, stdio: "ignore" },
+    );
+
+    const reviews = await git.reviews();
+    expect(reviews.available).toBe(true);
+    expect(reviews.currentUser).toBe("test@example.com");
+    expect(reviews.reviews).toHaveLength(1);
+    expect(reviews.reviews[0]).toMatchObject({
+      revision: head,
+      needsReview: true,
+      resolved: false,
+      submitted: false,
+    });
+    expect(reviews.reviews[0]?.base).toBeTruthy();
+    expect(reviews.reviews[0]?.head).toBe(head);
+
+    execFileSync(
+      "git",
+      [
+        "notes",
+        "--ref",
+        "refs/notes/devtools/discuss",
+        "append",
+        "-m",
+        JSON.stringify({
+          timestamp: "101",
+          author: "test@example.com",
+          description: "LGTM",
+          resolved: true,
+        }),
+        head,
+      ],
+      { cwd: dir, stdio: "ignore" },
+    );
+    const accepted = await git.reviews();
+    expect(accepted.reviews[0]?.resolved).toBe(true);
+    expect(accepted.reviews[0]?.needsReview).toBe(false);
+  });
+});
+
 describe("GitAdapter branches, tags, worktrees, and graph", () => {
   it("lists local and remote branches, then creates, switches, and deletes", async () => {
     const dir = makeRepo();
@@ -126,12 +196,115 @@ describe("GitAdapter branches, tags, worktrees, and graph", () => {
 
     const added = await git.addWorktree({ path: target, branch: "wt", createBranch: true });
     const resolved = realpathSync(target);
-    expect(added.some((worktree) => worktree.path === resolved && worktree.branch === "wt")).toBe(
-      true,
-    );
+    const worktree = added.find((item) => item.path === resolved);
+    expect(worktree?.branch).toBe("wt");
+    expect(worktree?.main).toBeTruthy();
+    expect(worktree?.merged).toBe(true);
+
+    writeFileSync(path.join(target, "c.ts"), "export const c = 1;\n");
+    execSync("git add . && git commit -qm wt", { cwd: target, stdio: "ignore" });
+    expect((await git.worktrees()).find((item) => item.path === resolved)?.merged).toBe(false);
 
     await git.removeWorktree(target);
-    expect((await git.worktrees()).some((worktree) => worktree.path === resolved)).toBe(false);
+    expect((await git.worktrees()).some((item) => item.path === resolved)).toBe(false);
+  });
+
+  it("reports branches and tags that differ from the remote", async () => {
+    const dir = makeRepo();
+    const remote = mkdtempSync(path.join(tmpdir(), "reins-remote-"));
+    execSync("git init -q --bare", { cwd: remote });
+    execSync(`git remote add origin ${remote}`, { cwd: dir });
+    const branch = execSync("git branch --show-current", { cwd: dir }).toString().trim();
+    execSync(`git push -q -u origin ${branch}`, { cwd: dir });
+    execSync("git tag v1", { cwd: dir });
+    execSync("git push -q origin v1", { cwd: dir });
+
+    writeFileSync(path.join(dir, "a.ts"), "export const a = 2;\n");
+    execSync("git add . && git commit -qm remote", { cwd: dir });
+    const remoteHead = execSync("git rev-parse HEAD", { cwd: dir }).toString().trim();
+    execSync(`git push -q origin ${branch}`, { cwd: dir });
+    execSync(`git push -q -f origin ${remoteHead}:refs/tags/v1`, { cwd: dir });
+    execSync("git reset -q --hard HEAD~1", { cwd: dir });
+
+    const git = new GitAdapter(dir);
+    const sync = await git.sync();
+    expect(sync.remotes).toEqual(["origin"]);
+    expect(sync.fetchedAt).toBeTruthy();
+    expect(sync.refs).toContainEqual(
+      expect.objectContaining({ kind: "branch", name: branch, state: "behind", behind: 1 }),
+    );
+    expect(sync.refs).toContainEqual(
+      expect.objectContaining({ kind: "tag", name: "v1", state: "updated" }),
+    );
+
+    await git.rebase(branch);
+    expect(execSync("git rev-parse HEAD", { cwd: dir }).toString().trim()).toBe(remoteHead);
+
+    writeFileSync(path.join(dir, "b.ts"), "export const b = 2;\n");
+    execSync("git add . && git commit -qm local", { cwd: dir, stdio: "ignore" });
+    const localHead = execSync("git rev-parse HEAD", { cwd: dir }).toString().trim();
+    await git.push(branch);
+    expect(
+      execSync(`git --git-dir=${remote} rev-parse refs/heads/${branch}`).toString().trim(),
+    ).toBe(localHead);
+  });
+
+  it("compares a branch with the remote branch of the same name, not its upstream", async () => {
+    const dir = makeRepo();
+    const remote = mkdtempSync(path.join(tmpdir(), "reins-remote-"));
+    execSync("git init -q --bare", { cwd: remote });
+    execSync(`git remote add origin ${remote}`, { cwd: dir });
+    const main = execSync("git branch --show-current", { cwd: dir }).toString().trim();
+    execSync(`git push -q -u origin ${main}`, { cwd: dir });
+
+    execSync("git checkout -qb feature", { cwd: dir, stdio: "ignore" });
+    execSync("git push -q -u origin feature", { cwd: dir });
+    execSync(`git branch --set-upstream-to=origin/${main} feature`, {
+      cwd: dir,
+      stdio: "ignore",
+    });
+
+    execSync(`git checkout -q ${main}`, { cwd: dir, stdio: "ignore" });
+    writeFileSync(path.join(dir, "a.ts"), "export const a = 2;\n");
+    execSync("git add . && git commit -qm main", { cwd: dir, stdio: "ignore" });
+    execSync(`git push -q origin ${main}`, { cwd: dir });
+    execSync("git checkout -q feature", { cwd: dir, stdio: "ignore" });
+
+    const git = new GitAdapter(dir);
+    expect(
+      (await git.sync()).refs.some((ref) => ref.kind === "branch" && ref.name === "feature"),
+    ).toBe(false);
+
+    writeFileSync(path.join(dir, "b.ts"), "export const b = 2;\n");
+    execSync("git add . && git commit -qm feature", { cwd: dir, stdio: "ignore" });
+    execSync("git push -q origin feature", { cwd: dir });
+    execSync("git reset -q --hard HEAD~1", { cwd: dir });
+
+    expect((await git.sync()).refs).toContainEqual(
+      expect.objectContaining({
+        kind: "branch",
+        name: "feature",
+        upstream: "origin/feature",
+        state: "behind",
+        behind: 1,
+      }),
+    );
+  });
+
+  it("does not warn about a local branch with no remote branch", async () => {
+    const dir = makeRepo();
+    const remote = mkdtempSync(path.join(tmpdir(), "reins-remote-"));
+    execSync("git init -q --bare", { cwd: remote });
+    execSync(`git remote add origin ${remote}`, { cwd: dir });
+    const main = execSync("git branch --show-current", { cwd: dir }).toString().trim();
+    execSync(`git push -q -u origin ${main}`, { cwd: dir });
+
+    execSync("git checkout -qb solo", { cwd: dir, stdio: "ignore" });
+    writeFileSync(path.join(dir, "a.ts"), "export const a = 2;\n");
+    execSync("git add . && git commit -qm solo", { cwd: dir, stdio: "ignore" });
+
+    const refs = (await new GitAdapter(dir).sync()).refs;
+    expect(refs.some((ref) => ref.kind === "branch" && ref.name === "solo")).toBe(false);
   });
 
   it("returns parents and refs for a merge graph", async () => {
@@ -149,5 +322,41 @@ describe("GitAdapter branches, tags, worktrees, and graph", () => {
     const merge = graph.find((commit) => commit.parents.length === 2);
     expect(merge).toBeTruthy();
     expect(graph.some((commit) => commit.refs.includes("feature"))).toBe(true);
+  });
+
+  it("reports commit refs and merges a commit into a branch", async () => {
+    const dir = makeRepo();
+    const git = new GitAdapter(dir);
+    const main = execSync("git branch --show-current", { cwd: dir }).toString().trim();
+    execSync("git checkout -qb feature", { cwd: dir, stdio: "ignore" });
+    writeFileSync(path.join(dir, "a.ts"), "export const a = 2;\n");
+    execSync("git add . && git commit -qm feature", { cwd: dir, stdio: "ignore" });
+    execSync("git tag v-feature", { cwd: dir, stdio: "ignore" });
+    const featureHead = execSync("git rev-parse HEAD", { cwd: dir }).toString().trim();
+
+    const refs = await git.commitRefs(featureHead);
+    expect(refs.branches).toContain("feature");
+    expect(refs.tags).toContain("v-feature");
+    expect(refs.mergedInto).toContain("feature");
+    expect(refs.mergedInto).not.toContain(main);
+    expect(refs.defaultBranch).toBe(main);
+
+    const result = await git.merge(featureHead, main);
+    expect(result.status.branch).toBe(main);
+    expect(result.status.clean).toBe(true);
+    expect((await git.commitRefs(featureHead)).mergedInto).toContain(main);
+  });
+
+  it("refuses to merge with a dirty working tree", async () => {
+    const dir = makeRepo();
+    const git = new GitAdapter(dir);
+    const main = execSync("git branch --show-current", { cwd: dir }).toString().trim();
+    execSync("git checkout -qb feature", { cwd: dir, stdio: "ignore" });
+    writeFileSync(path.join(dir, "a.ts"), "export const a = 2;\n");
+    execSync("git add . && git commit -qm feature", { cwd: dir, stdio: "ignore" });
+    const featureHead = execSync("git rev-parse HEAD", { cwd: dir }).toString().trim();
+    writeFileSync(path.join(dir, "b.ts"), "export const b = 2;\n");
+
+    await expect(git.merge(featureHead, main)).rejects.toMatchObject({ code: "GIT_DIRTY" });
   });
 });

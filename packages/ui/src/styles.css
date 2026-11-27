@@ -453,7 +453,7 @@
   padding: 4px 10px;
   color: var(--reins-muted);
   background: var(--reins-paper-2);
-  font-size: 11px;
+  font-size: inherit;
 }
 
 .reins-hunk-line {

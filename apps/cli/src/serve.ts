@@ -86,6 +86,12 @@ async function handle(request: Request): Promise<unknown> {
       return session.gitLog((params ?? {}) as { limit?: number; path?: string });
     case "gitGraph":
       return session.gitGraph((params ?? {}) as { limit?: number });
+    case "gitCommitRefs":
+      return session.gitCommitRefs(params as { hash: string });
+    case "gitMerge":
+      return session.gitMerge(params as { source: string; target: string });
+    case "gitReviews":
+      return session.gitReviews();
     case "gitBranches":
       return session.gitBranches();
     case "gitCheckoutBranch":
@@ -104,6 +110,12 @@ async function handle(request: Request): Promise<unknown> {
       return session.gitDeleteTag(params as { name: string });
     case "gitWorktrees":
       return session.gitWorktrees();
+    case "gitSync":
+      return session.gitSync((params ?? {}) as { tags?: boolean });
+    case "gitRebase":
+      return session.gitRebase(params as { branch: string; upstream?: string });
+    case "gitPush":
+      return session.gitPush(params as { branch: string });
     case "gitAddWorktree":
       return session.gitAddWorktree(
         params as {

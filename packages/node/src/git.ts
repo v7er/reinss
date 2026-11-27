@@ -5,10 +5,16 @@ import {
   type GitBranch,
   type GitBranches,
   type GitCommit,
+  type GitCommitRefs,
   type GitCommitResult,
   type GitFileStatus,
   type GitGraphCommit,
+  type GitMergeResult,
+  type GitReview,
+  type GitReviews,
   type GitStatus,
+  type GitSync,
+  type GitSyncRef,
   type GitTag,
   type GitWorktree,
   ReinsError,
@@ -32,6 +38,18 @@ export interface ChangedFile {
   path: string;
   status: "added" | "deleted" | "modified" | "renamed";
   ranges: Array<{ start: number; end: number }>;
+}
+
+interface AppraiseRequest {
+  timestamp?: string;
+  reviewRef?: string;
+  targetRef?: string;
+  requester?: string;
+  reviewers?: string[];
+  description?: string;
+  baseCommit?: string;
+  alias?: string;
+  v?: number;
 }
 
 export interface ResolvedRange {
@@ -387,6 +405,183 @@ export class GitAdapter {
     return commits;
   }
 
+  async commitRefs(hash: string): Promise<GitCommitRefs> {
+    this.assertRevision(hash);
+    const [branchOut, tagOut, mergedOut, worktrees, defaultBranch] = await Promise.all([
+      this.git(["branch", "--points-at", hash, "--format=%(refname:short)"]),
+      this.git(["tag", "--points-at", hash]),
+      this.git(["branch", "--contains", hash, "--format=%(refname:short)"]),
+      this.worktrees(),
+      this.defaultBranch(),
+    ]);
+    const lines = (value: string) =>
+      value
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+    return {
+      branches: lines(branchOut),
+      tags: lines(tagOut),
+      worktrees: worktrees
+        .filter((worktree) => worktree.head === hash)
+        .map((worktree) => ({
+          path: worktree.path,
+          branch: worktree.branch,
+          current: worktree.current,
+        })),
+      mergedInto: lines(mergedOut),
+      defaultBranch,
+    };
+  }
+
+  async merge(source: string, target: string): Promise<GitMergeResult> {
+    this.assertRevision(source);
+    await this.assertRef(target, "branch");
+    const status = await this.status();
+    if (!status.clean) {
+      throw new ReinsError("GIT_DIRTY", "Commit or stash changes before merging.");
+    }
+    if (status.branch !== target) await this.git(["checkout", target]);
+    try {
+      const message = await this.git(["merge", "--no-ff", "--no-edit", source]);
+      return { status: await this.status(), message: message.trim() };
+    } catch (error) {
+      await this.git(["merge", "--abort"]).catch(() => "");
+      throw error;
+    }
+  }
+
+  async reviews(): Promise<GitReviews> {
+    const ref = "refs/notes/devtools/reviews";
+    const available = await this.git(["show-ref", "--verify", "--quiet", ref])
+      .then(() => true)
+      .catch(() => false);
+    if (!available) return { available: false, currentUser: null, reviews: [] };
+
+    const currentUser = (await this.git(["config", "user.email"]).catch(() => "")).trim() || null;
+    const list = await this.git(["notes", "--ref", ref, "list"]).catch(() => "");
+    const revisions = list
+      .split("\n")
+      .map((line) => line.trim().split(" ")[1])
+      .filter((revision): revision is string => Boolean(revision));
+
+    const reviews: GitReview[] = [];
+    // shortcut: cap at 100 reviews, paginate when a repository exceeds that.
+    for (const revision of revisions.slice(0, 100)) {
+      const request = await this.latestRequest(revision);
+      if (!request) continue;
+      const comments = await this.reviewComments(revision);
+      const targetRef = request.targetRef || null;
+      const starting = request.alias || revision;
+      const submitted = targetRef ? await this.isAncestor(starting, targetRef) : false;
+      const head = submitted ? starting : await this.reviewHead(revision, request);
+      const base = submitted
+        ? (request.baseCommit ?? null)
+        : targetRef && head
+          ? await this.mergeBase(targetRef, head)
+          : null;
+      const reviewers = request.reviewers ?? [];
+      const requester = request.requester ?? "";
+      const needsReview =
+        Boolean(targetRef) &&
+        !submitted &&
+        !comments.resolved &&
+        requester !== currentUser &&
+        (!currentUser || reviewers.length === 0 || reviewers.includes(currentUser));
+      reviews.push({
+        revision,
+        shortRevision: revision.slice(0, 7),
+        reviewRef: request.reviewRef || null,
+        targetRef,
+        requester,
+        reviewers,
+        description: request.description ?? "",
+        timestamp: request.timestamp ?? "",
+        resolved: comments.resolved,
+        submitted,
+        needsReview,
+        comments: comments.count,
+        base,
+        head,
+      });
+    }
+    reviews.sort((a, b) => Number(b.timestamp) - Number(a.timestamp));
+    return { available: true, currentUser, reviews };
+  }
+
+  private async latestRequest(revision: string): Promise<AppraiseRequest | null> {
+    const out = await this.git([
+      "notes",
+      "--ref",
+      "refs/notes/devtools/reviews",
+      "show",
+      revision,
+    ]).catch(() => "");
+    let latest: AppraiseRequest | null = null;
+    for (const line of out.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const request = JSON.parse(line) as AppraiseRequest;
+        if ((request.v ?? 0) !== 0) continue;
+        if (!latest || Number(request.timestamp ?? 0) >= Number(latest.timestamp ?? 0)) {
+          latest = request;
+        }
+      } catch {
+        // Ignore notes that are not review requests.
+      }
+    }
+    return latest;
+  }
+
+  private async reviewComments(revision: string): Promise<{ count: number; resolved: boolean }> {
+    const out = await this.git([
+      "notes",
+      "--ref",
+      "refs/notes/devtools/discuss",
+      "show",
+      revision,
+    ]).catch(() => "");
+    let count = 0;
+    let resolved: boolean | null = null;
+    for (const line of out.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const comment = JSON.parse(line) as { resolved?: boolean; v?: number };
+        if ((comment.v ?? 0) !== 0) continue;
+        count += 1;
+        if (typeof comment.resolved === "boolean") {
+          resolved = (resolved ?? true) && comment.resolved;
+        }
+      } catch {
+        // Ignore notes that are not review comments.
+      }
+    }
+    return { count, resolved: resolved === true };
+  }
+
+  private async reviewHead(revision: string, request: AppraiseRequest): Promise<string | null> {
+    if (request.alias) return request.alias;
+    if (request.reviewRef) {
+      const refHead = await this.git(["rev-parse", request.reviewRef])
+        .then((value) => value.trim())
+        .catch(() => null);
+      if (refHead && (await this.isAncestor(revision, refHead))) return refHead;
+    }
+    return revision;
+  }
+
+  private async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
+    return this.git(["merge-base", "--is-ancestor", ancestor, descendant])
+      .then(() => true)
+      .catch(() => false);
+  }
+
+  private async mergeBase(a: string, b: string): Promise<string | null> {
+    return this.git(["merge-base", a, b])
+      .then((value) => value.trim())
+      .catch(() => null);
+  }
+
   async branches(): Promise<GitBranches> {
     const out = await this.git([
       "for-each-ref",
@@ -494,6 +689,7 @@ export class GitAdapter {
   async worktrees(): Promise<GitWorktree[]> {
     const out = await this.git(["worktree", "list", "--porcelain"]);
     const currentRoot = await fs.realpath(this.root).catch(() => path.resolve(this.root));
+    const main = await this.defaultBranch();
     const worktrees: GitWorktree[] = [];
     for (const block of out.split("\n\n")) {
       if (!block.trim()) continue;
@@ -506,6 +702,8 @@ export class GitAdapter {
         locked: false,
         prunable: false,
         current: false,
+        main,
+        merged: null,
       };
       for (const line of block.split("\n")) {
         if (line.startsWith("worktree ")) entry.path = line.slice(9);
@@ -520,9 +718,151 @@ export class GitAdapter {
       if (!entry.path) continue;
       entry.path = await fs.realpath(entry.path).catch(() => path.resolve(entry.path));
       entry.current = entry.path === currentRoot;
+      if (entry.branch && main) {
+        entry.merged = entry.branch === main || (await this.isAncestor(entry.branch, main));
+      }
       worktrees.push(entry);
     }
     return worktrees;
+  }
+
+  async sync(fetchTags = false): Promise<GitSync> {
+    const remotes = (await this.git(["remote"]))
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (remotes.length === 0) return { remotes: [], refs: [], fetchedAt: null };
+
+    let fetchedAt: string | null = null;
+    try {
+      const args = ["fetch", "--all", "--prune"];
+      if (fetchTags) args.push("--tags");
+      await this.git(args, 60_000);
+      fetchedAt = new Date().toISOString();
+    } catch {
+      // Offline or no credentials: still report the drift we can read locally.
+    }
+
+    const branches = await this.branches();
+    const remoteByName = new Map<string, GitBranch>();
+    for (const remote of branches.remote) {
+      const slash = remote.name.indexOf("/");
+      if (slash < 0) continue;
+      const name = remote.name.slice(slash + 1);
+      if (!remoteByName.has(name)) remoteByName.set(name, remote);
+    }
+    const refs: GitSyncRef[] = [];
+    for (const branch of branches.local) {
+      const remoteBranch = remoteByName.get(branch.name);
+      if (!remoteBranch) continue;
+      const counts = await this.aheadBehind(branch.name, remoteBranch.name);
+      if (counts.ahead === 0 && counts.behind === 0) continue;
+      refs.push({
+        kind: "branch",
+        name: branch.name,
+        remote: remoteBranch.name.split("/")[0] ?? "",
+        upstream: remoteBranch.name,
+        state:
+          counts.ahead > 0 && counts.behind > 0
+            ? "diverged"
+            : counts.behind > 0
+              ? "behind"
+              : "ahead",
+        ahead: counts.ahead,
+        behind: counts.behind,
+      });
+    }
+
+    const localTags = new Map((await this.tags()).map((tag) => [tag.name, tag.hash]));
+    for (const remote of remotes) {
+      const out = await this.git(["ls-remote", "--tags", remote], 30_000).catch(() => "");
+      for (const line of out.split("\n")) {
+        const [hash, ref] = line.split("\t");
+        if (!hash || !ref || ref.endsWith("^{}")) continue;
+        const name = ref.replace("refs/tags/", "");
+        const local = localTags.get(name);
+        if (local === hash) continue;
+        refs.push({
+          kind: "tag",
+          name,
+          remote,
+          upstream: null,
+          state: local ? "updated" : "new",
+          ahead: 0,
+          behind: 0,
+        });
+      }
+    }
+    return { remotes, refs, fetchedAt };
+  }
+
+  async rebase(branch: string, upstream?: string): Promise<GitStatus> {
+    await this.assertRef(branch, "branch");
+    const target = upstream?.trim() || (await this.sameNameRemote(branch));
+    if (!target) {
+      throw new ReinsError(
+        "GIT_NO_UPSTREAM",
+        `Branch ${branch} has no remote branch with the same name.`,
+      );
+    }
+    this.assertRevision(target);
+    await this.git(["rebase", target, branch], 60_000);
+    return this.status();
+  }
+
+  async push(branch: string): Promise<GitStatus> {
+    await this.assertRef(branch, "branch");
+    const target = await this.sameNameRemote(branch);
+    if (!target) {
+      await this.git(["push", "-u", "origin", branch], 60_000);
+      return this.status();
+    }
+    const slash = target.indexOf("/");
+    const remote = target.slice(0, slash);
+    await this.git(["push", remote, `${branch}:${branch}`], 60_000);
+    return this.status();
+  }
+
+  private async aheadBehind(
+    local: string,
+    remote: string,
+  ): Promise<{ ahead: number; behind: number }> {
+    const out = await this.git([
+      "rev-list",
+      "--left-right",
+      "--count",
+      `${local}...${remote}`,
+    ]).catch(() => "");
+    const [ahead, behind] = out.trim().split(/\s+/).map(Number);
+    return { ahead: ahead ?? 0, behind: behind ?? 0 };
+  }
+
+  private async sameNameRemote(branch: string): Promise<string | null> {
+    const remotes = (await this.git(["remote"]))
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    for (const remote of remotes) {
+      const ref = `${remote}/${branch}`;
+      const exists = await this.git(["show-ref", "--verify", "--quiet", `refs/remotes/${ref}`])
+        .then(() => true)
+        .catch(() => false);
+      if (exists) return ref;
+    }
+    return null;
+  }
+
+  private async defaultBranch(): Promise<string | null> {
+    for (const name of ["main", "master"]) {
+      const exists = await this.git(["show-ref", "--verify", "--quiet", `refs/heads/${name}`])
+        .then(() => true)
+        .catch(() => false);
+      if (exists) return name;
+    }
+    const head = await this.git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
+      .then((value) => value.trim())
+      .catch(() => "");
+    return head || null;
   }
 
   async addWorktree(input: {

@@ -19,9 +19,13 @@ import {
   folderForType,
   type GitBranches,
   type GitCommit,
+  type GitCommitRefs,
   type GitCommitResult,
   type GitGraphCommit,
+  type GitMergeResult,
+  type GitReviews,
   type GitStatus,
+  type GitSync,
   type GitTag,
   type GitWorktree,
   type GraphEdge,
@@ -380,6 +384,20 @@ export class RepoSession implements ReinsApi {
     return this.git.graph(req?.limit ?? 200);
   }
 
+  async gitCommitRefs(req: { hash: string }): Promise<GitCommitRefs> {
+    return this.git.commitRefs(req.hash);
+  }
+
+  async gitMerge(req: { source: string; target: string }): Promise<GitMergeResult> {
+    const result = await this.git.merge(req.source, req.target);
+    this.invalidate();
+    return result;
+  }
+
+  async gitReviews(): Promise<GitReviews> {
+    return this.git.reviews();
+  }
+
   async gitBranches(): Promise<GitBranches> {
     return this.git.branches();
   }
@@ -420,6 +438,22 @@ export class RepoSession implements ReinsApi {
 
   async gitWorktrees(): Promise<GitWorktree[]> {
     return this.git.worktrees();
+  }
+
+  async gitSync(req?: { tags?: boolean }): Promise<GitSync> {
+    return this.git.sync(req?.tags);
+  }
+
+  async gitRebase(req: { branch: string; upstream?: string }): Promise<GitStatus> {
+    const status = await this.git.rebase(req.branch, req.upstream);
+    this.invalidate();
+    return status;
+  }
+
+  async gitPush(req: { branch: string }): Promise<GitStatus> {
+    const status = await this.git.push(req.branch);
+    this.invalidate();
+    return status;
   }
 
   async gitAddWorktree(req: {

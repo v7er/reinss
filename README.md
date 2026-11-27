@@ -8,7 +8,7 @@ A local-first desktop app and embeddable React component set for three jobs:
 
 Reinss is built on [Trail](https://github.com/trailhq) as the code graph. It does not fork or reimplement Trail's parser or storage. It wraps Trail behind one adapter, then adds surfaces, semantic diff, knowledge, and review on top.
 
-**Status: implemented MVP.** The workspace, core, Trail adapter, surface scanners, semantic diff, knowledge ledger, CLI, MCP server, embeddable React components, and Tauri shell exist. Surfaces are grouped by C1 component (webapp, mobile, backoffice, core, cli), can be filtered to the lines a Git range changed, and verify their symbols against the Trail graph. The Git tool shows status, stages and unstages files, commits, reviews a range in one tab, draws history as a Canvas tree, and manages local and remote branches, tags, and worktrees. The desktop uses `Cmd+K` as its only navigation surface. Phase 6 hardening (packaging, Windows/Linux) remains; the file watcher is in. [TODO.md](TODO.md) tracks the gaps against the full product.
+**Status: implemented MVP.** The workspace, core, Trail adapter, surface scanners, semantic diff, knowledge ledger, CLI, MCP server, embeddable React components, and Tauri shell exist. Surfaces are grouped by C1 component (webapp, mobile, backoffice, core, cli), can be filtered to the lines a Git range changed, and verify their symbols against the Trail graph. The Git tool shows status, stages and unstages files, commits, reviews a range in one tab, draws history as a Canvas tree, lists git-appraise reviews, manages local and remote branches, tags, and worktrees, and warns when refs drift from their remotes. The desktop uses `Cmd+K` as its only navigation surface. Phase 6 hardening (packaging, Windows/Linux) remains; the file watcher is in. [TODO.md](TODO.md) tracks the gaps against the full product.
 
 ## Documents
 
@@ -121,7 +121,7 @@ The implementation follows the same boundaries the spec set: one Trail adapter, 
 
 ![Reinss semantic diff](docs/assets/ui-diff.png)
 
-Mantine theme with a warm paper light mode and the original dark/blue mode. The homepage is only recent repositories and `Cmd+K`. No top bar. `Cmd+K` opens the Spotlight palette. The workspace has three tools: Git (changes, review, history tree, branches, tags, worktrees), Surfaces (entry points by component, flow, call graph), and Knowledge (notes, check).
+Mantine theme with a warm paper light mode and the original dark/blue mode. The homepage is recent tools, open git-appraise reviews that need you, and `Cmd+K`. No top bar. `Cmd+K` opens the Spotlight palette. The workspace has three tools: Git (changes, review, history tree, reviews, branches, tags, worktrees), Surfaces (entry points by component, flow, call graph), and Knowledge (notes, check).
 
 ## Product principles
 

@@ -172,6 +172,10 @@ body {
   background: var(--reins-soft);
 }
 
+.reins-timeline-label.is-active .reins-timeline-subject {
+  font-weight: 600;
+}
+
 .reins-timeline-subject {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -237,5 +241,15 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .reins-timeline-pulse {
     animation: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .reins-timeline-subject {
+    font-size: 10px;
+  }
+
+  .reins-timeline-date {
+    display: none;
   }
 }

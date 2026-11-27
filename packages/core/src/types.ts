@@ -497,6 +497,24 @@ export interface GitWorktree {
   locked: boolean;
   prunable: boolean;
   current: boolean;
+  main: string | null;
+  merged: boolean | null;
+}
+
+export interface GitSyncRef {
+  kind: "branch" | "tag";
+  name: string;
+  remote: string;
+  upstream: string | null;
+  state: "ahead" | "behind" | "diverged" | "new" | "updated";
+  ahead: number;
+  behind: number;
+}
+
+export interface GitSync {
+  remotes: string[];
+  refs: GitSyncRef[];
+  fetchedAt: string | null;
 }
 
 export interface GitGraphCommit {
@@ -508,6 +526,42 @@ export interface GitGraphCommit {
   date: string;
   subject: string;
   refs: string[];
+}
+
+export interface GitCommitRefs {
+  branches: string[];
+  tags: string[];
+  worktrees: Array<{ path: string; branch: string | null; current: boolean }>;
+  mergedInto: string[];
+  defaultBranch: string | null;
+}
+
+export interface GitMergeResult {
+  status: GitStatus;
+  message: string;
+}
+
+export interface GitReview {
+  revision: string;
+  shortRevision: string;
+  reviewRef: string | null;
+  targetRef: string | null;
+  requester: string;
+  reviewers: string[];
+  description: string;
+  timestamp: string;
+  resolved: boolean;
+  submitted: boolean;
+  needsReview: boolean;
+  comments: number;
+  base: string | null;
+  head: string | null;
+}
+
+export interface GitReviews {
+  available: boolean;
+  currentUser: string | null;
+  reviews: GitReview[];
 }
 
 export interface BootstrapResult {
@@ -529,6 +583,9 @@ export interface ReinsApi {
   gitCommit(req: { message: string; amend?: boolean; signoff?: boolean }): Promise<GitCommitResult>;
   gitLog(req?: { limit?: number; path?: string }): Promise<GitCommit[]>;
   gitGraph(req?: { limit?: number }): Promise<GitGraphCommit[]>;
+  gitCommitRefs(req: { hash: string }): Promise<GitCommitRefs>;
+  gitMerge(req: { source: string; target: string }): Promise<GitMergeResult>;
+  gitReviews(): Promise<GitReviews>;
   gitBranches(): Promise<GitBranches>;
   gitCheckoutBranch(req: { name: string; remote?: boolean }): Promise<GitStatus>;
   gitCreateBranch(req: {
@@ -541,6 +598,9 @@ export interface ReinsApi {
   gitCreateTag(req: { name: string; ref?: string; message?: string }): Promise<GitTag[]>;
   gitDeleteTag(req: { name: string }): Promise<GitTag[]>;
   gitWorktrees(): Promise<GitWorktree[]>;
+  gitSync(req?: { tags?: boolean }): Promise<GitSync>;
+  gitRebase(req: { branch: string; upstream?: string }): Promise<GitStatus>;
+  gitPush(req: { branch: string }): Promise<GitStatus>;
   gitAddWorktree(req: {
     path: string;
     branch?: string;

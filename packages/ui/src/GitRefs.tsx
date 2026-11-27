@@ -65,6 +65,9 @@ export function GitRefs({ onChanged }: GitRefsProps) {
   const branches = useAsync(() => client.call<GitBranches>("gitBranches"), []);
   const tags = useAsync(() => client.call<GitTag[]>("gitTags"), []);
   const worktrees = useAsync(() => client.call<GitWorktree[]>("gitWorktrees"), []);
+  const remoteBranches = new Set(
+    (branches.data?.remote ?? []).map((branch) => branch.name.split("/").slice(1).join("/")),
+  );
 
   const run = async (action: () => Promise<unknown>, message: string) => {
     setBusy(true);
@@ -514,13 +517,48 @@ export function GitRefs({ onChanged }: GitRefsProps) {
               <Stack gap={0}>
                 {(worktrees.data ?? []).map((worktree) => (
                   <Group key={worktree.path} gap="xs" wrap="nowrap" className="reins-row">
-                    <Badge
-                      size="xs"
-                      variant="light"
-                      color={worktree.current ? "blue" : worktree.prunable ? "red" : "gray"}
-                    >
-                      {worktree.current ? "current" : worktree.prunable ? "prunable" : "worktree"}
+                    <Badge size="xs" variant="light" color="gray">
+                      worktree
                     </Badge>
+                    {worktree.current ? (
+                      <Badge size="xs" variant="light" color="blue">
+                        current
+                      </Badge>
+                    ) : worktree.prunable ? (
+                      <Badge size="xs" variant="light" color="red">
+                        prunable
+                      </Badge>
+                    ) : null}
+                    {worktree.branch && worktree.main ? (
+                      <Tooltip
+                        label={
+                          worktree.branch === worktree.main
+                            ? `On ${worktree.main}`
+                            : worktree.merged
+                              ? `Merged into ${worktree.main}`
+                              : `Not merged into ${worktree.main}`
+                        }
+                      >
+                        <Badge
+                          size="xs"
+                          variant="light"
+                          color={worktree.merged ? "green" : "yellow"}
+                        >
+                          {worktree.branch === worktree.main
+                            ? "main"
+                            : worktree.merged
+                              ? "merged"
+                              : "not merged"}
+                        </Badge>
+                      </Tooltip>
+                    ) : null}
+                    {worktree.branch && branches.data && !remoteBranches.has(worktree.branch) ? (
+                      <Tooltip label="No remote branch with the same name; not compared.">
+                        <Badge size="xs" variant="light" color="gray">
+                          no remote
+                        </Badge>
+                      </Tooltip>
+                    ) : null}
                     <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
                       <Text size="sm" fw={500} truncate title={worktree.path}>
                         {worktree.path}

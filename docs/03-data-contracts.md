@@ -512,6 +512,24 @@ interface GitWorktree {
   locked: boolean;
   prunable: boolean;
   current: boolean;
+  main: string | null;                 // local main or master, else origin/HEAD
+  merged: boolean | null;              // branch tip is an ancestor of main
+}
+
+interface GitSyncRef {
+  kind: "branch" | "tag";
+  name: string;
+  remote: string;
+  upstream: string | null;
+  state: "ahead" | "behind" | "diverged" | "new" | "updated";
+  ahead: number;
+  behind: number;
+}
+
+interface GitSync {
+  remotes: string[];
+  refs: GitSyncRef[];
+  fetchedAt: string | null;            // null when fetch failed or no remotes
 }
 
 interface GitGraphCommit {
@@ -524,6 +542,42 @@ interface GitGraphCommit {
   subject: string;
   refs: string[];
 }
+
+interface GitCommitRefs {
+  branches: string[];                  // local branches pointing at the commit
+  tags: string[];                      // tags pointing at the commit
+  worktrees: Array<{ path: string; branch: string | null; current: boolean }>;
+  mergedInto: string[];                // local branches that contain the commit
+  defaultBranch: string | null;        // local main or master, else origin/HEAD
+}
+
+interface GitMergeResult {
+  status: GitStatus;
+  message: string;
+}
+
+interface GitReview {
+  revision: string;
+  shortRevision: string;
+  reviewRef: string | null;
+  targetRef: string | null;
+  requester: string;
+  reviewers: string[];
+  description: string;
+  timestamp: string;
+  resolved: boolean;
+  submitted: boolean;
+  needsReview: boolean;
+  comments: number;
+  base: string | null;
+  head: string | null;
+}
+
+interface GitReviews {
+  available: boolean;
+  currentUser: string | null;
+  reviews: GitReview[];
+}
 ```
 
 Rules:
@@ -535,13 +589,19 @@ Rules:
 - `gitCommit` requires a non-empty message and fails with `GIT_COMMIT_EMPTY` otherwise. It supports `amend` and `signoff`.
 - `gitLog` returns at most 200 commits, newest first, and accepts an optional file path.
 - `gitGraph` returns at most 1,000 commits across local branches, remote branches, and tags, newest first in topological order. `parents` is the full parent list, so merge commits have two or more entries. `refs` carries branch, remote, tag, and `HEAD` labels.
+- `gitCommitRefs` reports the local branches and tags that point at a commit, the worktrees whose `HEAD` is that commit, and the local branches that contain it. `defaultBranch` is the local `main` or `master`, else `origin/HEAD`.
+- `gitMerge` merges `source` into the local branch `target` with `git merge --no-ff --no-edit`. It checks out `target` when it is not current, requires a clean working tree (`GIT_DIRTY`), and aborts the merge on conflict before rethrowing. It returns the new status and git's merge message.
+- `gitReviews` reads git-appraise notes directly with `git notes --ref refs/notes/devtools/reviews` and `refs/notes/devtools/discuss`. It does not require the `git-appraise` binary. `available` is false when the reviews ref is absent. `needsReview` is true for an open, unresolved review whose requester is not the current user and whose reviewer list is empty or includes the current user. `base` and `head` are the merge base and review head used to open the review diff. At most 100 reviews are read.
 - `gitBranches` reads `refs/heads` and `refs/remotes`, skips `*/HEAD`, and parses `%(upstream:track)` for ahead and behind counts.
 - `gitCheckoutBranch` checks out a local branch. With `remote: true`, it creates a local tracking branch when one does not exist.
 - `gitCreateBranch` validates the name with `git check-ref-format --branch`, accepts an optional start point, and can check out the new branch.
 - `gitDeleteBranch` uses `git branch -d`, or `-D` when `force` is true. Git refuses to delete the current branch.
 - `gitTags` reads `refs/tags` with `for-each-ref`. `annotated` is true when the ref points at a tag object.
 - `gitCreateTag` creates a lightweight tag, or an annotated tag when `message` is present.
-- `gitWorktrees` reads `git worktree list --porcelain` and resolves paths to real paths. `current` marks the repository root.
+- `gitWorktrees` reads `git worktree list --porcelain` and resolves paths to real paths. `current` marks the repository root. `main` is the local `main` or `master` branch, else `origin/HEAD`. `merged` is true when the worktree branch tip is an ancestor of `main`, and null when the branch or main is unknown.
+- `gitSync` runs `git fetch --all --prune` (60 second timeout), adding `--tags` when `tags` is true, and then reports drift. A local branch is compared with the remote branch of the same name, never with its configured upstream: it is `ahead`, `behind`, or `diverged`. A branch with no same-name remote branch is skipped. A remote tag missing locally is `new`; a tag whose hash differs is `updated`. `fetchedAt` is null when the fetch failed or the repository has no remotes. The UI polls this method only while auto fetch is on.
+- `gitRebase` checks out the branch and runs `git rebase <upstream> <branch>`, where `upstream` is the same-name remote branch or the explicit `upstream` argument. It fails with `GIT_NO_UPSTREAM` when neither exists. Conflicts leave the repository mid-rebase and surface as `GIT_FAILED`.
+- `gitPush` pushes the branch to the remote branch of the same name, or runs `git push -u origin <branch>` when no same-name remote branch exists. It never force-pushes.
 - `gitAddWorktree` requires an absolute path. `createBranch` requires a branch name and uses `git worktree add -b`. Without a branch it detaches at `HEAD`.
 - `gitRemoveWorktree` refuses to remove the current worktree with `GIT_WORKTREE_CURRENT`.
 - Invalid ref names fail with `GIT_REF_INVALID`. A missing worktree path fails with `GIT_WORKTREE_PATH`.
